@@ -74,8 +74,4 @@ commands = [
 ]
 # Events the plugin subscribes to during activation. Observation events
 # refresh the cached snapshot-derived state; handlers never spawn.
-events = [
-  "terminal.cwd-changed",
-  "terminal.title-changed",
-  "focus.changed",
-]
+events = ["terminal.cwd-changed", "terminal.title-changed", "focus.changed"]
