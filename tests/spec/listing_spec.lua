@@ -11,6 +11,7 @@ function M.run(context)
   tap.ok(listing.is_valid_branch_name("main"), "main is valid")
   tap.ok(listing.is_valid_branch_name("feature/foo-bar"), "feature branch valid")
   tap.ok(listing.is_valid_branch_name("release-1.0"), "release branch valid")
+  tap.ok(listing.is_valid_branch_name("user@host"), "embedded at without brace valid")
   tap.ok(not listing.is_valid_branch_name(""), "empty invalid")
   tap.ok(not listing.is_valid_branch_name("a/b/../c"), "dotdot invalid")
   tap.ok(not listing.is_valid_branch_name("bad~name"), "tilde invalid")
@@ -23,6 +24,13 @@ function M.run(context)
   tap.ok(not listing.is_valid_branch_name("double//slash"), "double slash invalid")
   tap.ok(not listing.is_valid_branch_name("evil;rm -rf"), "semicolon invalid")
   tap.ok(not listing.is_valid_branch_name("bad\0evil"), "null invalid")
+  -- R30 (simplified `git check-ref-format`): reflog `@{` sequences, a lone
+  -- `@`, and a leading `-` are rejected.
+  tap.ok(not listing.is_valid_branch_name("foo@{0}"), "at-brace reflog invalid")
+  tap.ok(not listing.is_valid_branch_name("@{"), "bare at-brace invalid")
+  tap.ok(not listing.is_valid_branch_name("@"), "lone at invalid")
+  tap.ok(not listing.is_valid_branch_name("-main"), "leading dash invalid")
+  tap.ok(not listing.is_valid_branch_name("-"), "lone dash invalid")
 
   tap.ok(listing.is_valid_commit_hash("abc1234"), "short hash valid")
   tap.ok(listing.is_valid_commit_hash("abcdef1234567890abcdef1234567890abcdef12"), "full hash valid")
@@ -104,10 +112,11 @@ function M.run(context)
 
   tap.equal(listing.MAX_ENTRIES, 128, "MAX_ENTRIES is 128")
   tap.equal(listing.MAX_COMMITS, 64, "MAX_COMMITS is 64")
+  -- R30: one branch bound for ingestion and presentation.
   tap.equal(listing.MAX_BRANCHES, 32, "MAX_BRANCHES is 32")
+  tap.equal(listing.MAX_SELECTION, nil, "MAX_SELECTION removed")
   tap.equal(listing.MAX_NAME_CHARS, 128, "MAX_NAME_CHARS is 128")
   tap.equal(listing.MAX_COMMIT_MESSAGE_CHARS, 256, "MAX_COMMIT_MESSAGE_CHARS is 256")
-  tap.equal(listing.MAX_SELECTION, 64, "MAX_SELECTION is 64")
 end
 
 return M

@@ -17,10 +17,13 @@ local M = {}
 
 M.MAX_ENTRIES = 128
 M.MAX_COMMITS = 64
+-- R30: the single branch bound. Ingestion (`list_branches`,
+-- `filter_branches`) and presentation (`scene.branch_rows`,
+-- `scene.branches`) share it: the listing holds at most 32 branches, so a
+-- wider presentation window could never fill.
 M.MAX_BRANCHES = 32
 M.MAX_NAME_CHARS = 128
 M.MAX_COMMIT_MESSAGE_CHARS = 256
-M.MAX_SELECTION = 64
 
 M.FILE_STATUSES = {
   modified = true,
@@ -92,10 +95,19 @@ function M.is_valid_branch_name(branch)
   if #branch == 0 or #branch > M.MAX_NAME_CHARS then
     return false
   end
-  for _, denied in ipairs({ "..", "~", "^", ":", "?", "*", "[", "//", ".lock" }) do
+  for _, denied in ipairs({ "..", "~", "^", ":", "?", "*", "[", "//", ".lock", "@{" }) do
     if contains_plain(branch, denied) then
       return false
     end
+  end
+  -- R30 (simplified `git check-ref-format`): a lone `@` is a reflog
+  -- placeholder rather than a branch name, and a leading `-` collides with
+  -- option parsing. An `@` elsewhere (without `{`) stays valid.
+  if branch == "@" then
+    return false
+  end
+  if string.sub(branch, 1, 1) == "-" then
+    return false
   end
   if string.sub(branch, 1, 1) == "/" or string.sub(branch, 1, 1) == "." then
     return false

@@ -1,12 +1,16 @@
 -- Declarative scenes for Bitty Git Panel (bitty-terminal.git-panel).
 --
 -- Pure builders producing Plugin API v1 declarative components only
--- (`Text`, `Row`, `Column`, `List`, depth `16`) for branch, status, diff,
--- and log presentation. No host dependency, no I/O. The host mounts the
--- returned component in the panel surface owned by the `panel.provider`
--- registration; this module never touches PTY bytes, the grid, or the
--- render/input hot paths. Text truncates to the overlay text bound (`128`)
--- and commit messages to the tooltip bound (`256`).
+-- (`Text`, `Row`, `Column`, `List`, depth `16`) for branch presentation.
+-- No host dependency, no I/O. The host mounts the returned component in
+-- the panel surface owned by the `panel.provider` registration; this
+-- module never touches PTY bytes, the grid, or the render/input hot
+-- paths. Text truncates to the overlay text bound (`128`).
+--
+-- M-GP-05: only the branch path lives here. The status, log, and diff
+-- presenters were dead code (never imported by init.lua) and were removed;
+-- their presentation wiring lands in a follow-up once the panel mount
+-- surface exists.
 
 local listing = require("git-panel.listing")
 
@@ -23,9 +27,12 @@ end
 
 -- Bounded branch rows for command results and tests: `{ label, current }`
 -- with labels truncated to the overlay text bound plus a current marker.
+-- R30: bounded by the single branch bound (`MAX_BRANCHES`); the listing
+-- ingests at most that many branches, so a wider presentation window could
+-- never fill.
 function M.branch_rows(branches, max_rows)
   local rows = {}
-  local limit = max_rows or listing.MAX_SELECTION
+  local limit = max_rows or listing.MAX_BRANCHES
   for _, branch in ipairs(branches or {}) do
     if #rows >= limit then
       break
@@ -53,54 +60,10 @@ function M.branches(branches)
   return { kind = "List", children = children }
 end
 
--- Status presentation as a v1 `List` of `path (status)` rows, bounded to
--- the entry cap.
-function M.status(entries)
-  local children = {}
-  for index, entry in ipairs(entries or {}) do
-    if index > listing.MAX_ENTRIES then
-      break
-    end
-    children[#children + 1] = text(
-      listing.truncate_text(entry.path or "") .. " (" .. tostring(entry.status or "?") .. ")"
-    )
-  end
-  if #children == 0 then
-    return M.empty()
-  end
-  return { kind = "List", children = children }
-end
+-- M-GP-05: status presenter removed as dead code; status presentation wiring lands in a follow-up once the panel mount surface exists.
 
--- Log presentation as a v1 `List` of `short-hash message` rows, bounded to
--- the commit cap with messages at the tooltip bound.
-function M.log(commits)
-  local children = {}
-  for index, commit in ipairs(commits or {}) do
-    if index > listing.MAX_COMMITS then
-      break
-    end
-    local message = listing.truncate_message(commit.message or "")
-    children[#children + 1] = text(tostring(commit.short_hash or commit.hash or "?") .. " " .. message)
-  end
-  if #children == 0 then
-    return M.empty()
-  end
-  return { kind = "List", children = children }
-end
+-- M-GP-05: log presenter removed as dead code; log presentation wiring lands in a follow-up once the panel mount surface exists.
 
--- Diff presentation as a v1 `List` of bounded text lines.
-function M.diff(lines)
-  local children = {}
-  for index, line in ipairs(lines or {}) do
-    if index > listing.MAX_ENTRIES then
-      break
-    end
-    children[#children + 1] = text(listing.truncate_text(tostring(line)))
-  end
-  if #children == 0 then
-    return M.empty()
-  end
-  return { kind = "List", children = children }
-end
+-- M-GP-05: diff presenter removed as dead code; diff presentation wiring lands in a follow-up once the panel mount surface exists.
 
 return M
