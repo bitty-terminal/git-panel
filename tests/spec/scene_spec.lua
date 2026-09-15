@@ -32,6 +32,7 @@ end
 function M.run(context)
   local tap = context.tap
   local scene = require("git-panel.scene")
+  local listing = require("git-panel.listing")
 
   tap.ok(only_v1(scene.empty()), "empty uses v1 nodes only")
 
@@ -42,26 +43,28 @@ function M.run(context)
   local branch_scene = scene.branches(branches)
   tap.ok(only_v1(branch_scene), "branch scene uses v1 nodes only")
 
-  local status = {
-    { path = "~/projects/bar.rs", status = "modified" },
-    { path = "~/projects/foo.txt", status = "added" },
-  }
-  tap.ok(only_v1(scene.status(status)), "status scene uses v1 nodes only")
-
-  local commits = {
-    { hash = "abc1234", short_hash = "abc1234", message = "fix bug" },
-    { hash = "def5678", short_hash = "def5678", message = "add feature" },
-  }
-  tap.ok(only_v1(scene.log(commits)), "log scene uses v1 nodes only")
-  tap.ok(only_v1(scene.diff({ "-old", "+new" })), "diff scene uses v1 nodes only")
-
-  local rows = scene.branch_rows(branches, 64)
+  local rows = scene.branch_rows(branches)
   tap.equal(#rows, 2, "two branch rows")
   tap.ok(rows[2].current, "current flagged on main")
 
   local long = string.rep("b", 200)
-  local truncated = scene.branch_rows({ { name = long, is_current = false } }, 64)
+  local truncated = scene.branch_rows({ { name = long, is_current = false } })
   tap.ok(#truncated[1].label <= 128 + 8, "long branch label truncated near bound")
+
+  -- M-GP-05: only the branch presentation path lives in scene.lua; the
+  -- status, log, and diff presenters were removed as dead code.
+  tap.equal(scene.status, nil, "status presenter removed")
+  tap.equal(scene.log, nil, "log presenter removed")
+  tap.equal(scene.diff, nil, "diff presenter removed")
+
+  -- R30: the single branch bound pins both entries at 32.
+  tap.equal(listing.MAX_BRANCHES, 32, "single branch bound is 32")
+  local many = {}
+  for i = 1, 50 do
+    many[#many + 1] = { name = "branch" .. i, is_current = false }
+  end
+  tap.equal(#scene.branch_rows(many), 32, "branch rows default bounded at 32")
+  tap.equal(#scene.branches(many).children, 32, "branch scene bounded at 32")
 end
 
 return M
