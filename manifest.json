@@ -1,0 +1,36 @@
+{
+  "format": "carryctx-pack-dir",
+  "format_version": 2,
+  "carryctx_version": "0.11.4",
+  "schema_version": 18,
+  "project_id": "01M2HS6NJS33WB36ACJ1B9QZVS",
+  "export_id": "01M2HVS3PWXN246GK1NQHY17R4",
+  "created_at": "2026-09-15T06:23:58.684464290+00:00",
+  "parents": [],
+  "sequences": {},
+  "source": {
+    "git_commit": "b6b41361d0433b2be2681f0022f43d6c4b225e66",
+    "hostname": "unknown"
+  },
+  "counts": {
+    "agents": 1,
+    "checkpoint_corrections": 0,
+    "checkpoints": 0,
+    "decisions": 0,
+    "events": 3,
+    "graph_edges": 0,
+    "graph_nodes": 0,
+    "handoffs": 0,
+    "progress_items": 0,
+    "scopes": 0,
+    "sequences": 0,
+    "sessions": 0,
+    "task_dependencies": 0,
+    "tasks": 0,
+    "team_members": 0,
+    "teams": 0,
+    "tombstones": 0,
+    "worktrees": 0
+  },
+  "redacted": true
+}

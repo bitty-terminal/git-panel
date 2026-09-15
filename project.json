@@ -1,0 +1,11 @@
+{
+  "created_at": "2026-09-15T05:38:57.241623426+00:00",
+  "git_common_dir": "***REDACTED-PATH***",
+  "id": "01M2HS6NJS33WB36ACJ1B9QZVS",
+  "main_branch": "main",
+  "name": "git-panel",
+  "repository_root": "***REDACTED-PATH***",
+  "schema_version": 4,
+  "task_prefix": "CTX",
+  "updated_at": "2026-09-15T05:38:57.241623426+00:00"
+}
