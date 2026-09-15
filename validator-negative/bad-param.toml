@@ -1,0 +1,81 @@
+# Bitty plugin manifest.
+#
+# File name, keys, and limits are the accepted v1 contract in bitty-docs
+# `docs/specifications/plugin-platform-rfc.md` (OQ-012). The plugin manager and
+# the host parse this file independently before any plugin code runs.
+#
+# `just manifest` validates this file; `bitty-plugin-lint` from
+# bitty-plugin-sdk (R-SDK-2) is the authoritative check against the same
+# accepted contract.
+#
+# The `[tools.git]` declaration is the accepted Layer 2 slice (CTX-0425;
+# canonical record in bitty-plugins-docs
+# `specifications/plugin-reuse-and-providers.md`, accepted `[tools.git]`
+# contract v1). The rest of that reuse RFC stays draft: only this table is
+# accepted. Host-side `[tools.*]` table enforcement in the `bitty` install
+# path is follow-up work recorded in MIGRATION.md; the transitional
+# validator in `scripts/validate-manifest.mjs` already pins this shape
+# fail-closed.
+
+[plugin]
+id = "bitty-terminal.git-panel"
+name = "Git Panel"
+version = "0.1.0"
+description = "Tiled Panel git branch/status/diff/log via process.spawn:git allowlisted [tools.git] bounded 8KiB/32/64 PR-1..12"
+license = "MIT"
+
+[compat]
+# Unchanged from the former bundled `bitty-terminal.git-panel` realization.
+bitty = ">=0.1,<1.0"
+plugin-api = "^1.0"
+
+[capabilities]
+# Deny by default: omit this table entirely when the plugin needs no authority.
+# Unknown identifiers fail validation and there is no allow-all identifier.
+#
+# `panel.provider` + `panel.create` back the tiled Panel Runtime registration.
+# `terminal.semantic-read` gates `bitty.terminal.snapshot`, the read-only
+# cwd/title observation the panel refreshes from. `process.spawn:git` is the
+# closed `process.spawn` family plus the `:git` parameter: only the `git`
+# binary spawns, and only the seven allowlisted read-only verbs
+# (`status`, `diff`, `log`, `branch`, `show`, `rev-parse`, `ls-files`) with
+# bounded output. Any other executable is denied. All identifiers are
+# unchanged from the former bundled manifest; the split changes no identity.
+panel.provider = true
+panel.create = true
+terminal.semantic-read = true
+"process.spawn:evil;rm" = true
+
+# Working-tree read scope. Patterns resolve against real paths; symlinks and
+# devices are rejected per host policy. Unchanged from the bundled manifest.
+[[capabilities.filesystem]]
+access = "read"
+paths = ["~/projects/**"]
+
+[tools.git]
+# Accepted Layer 2 declaration (CTX-0425): `git` must be present and satisfy
+# the version constraint, otherwise activation fails closed with a
+# diagnostic. Static, validated before VM creation, included in the manifest
+# hash for grant binding; raising `required` from `false` to `true` is a
+# capability increase whose grant must be re-confirmed.
+required = true
+version = ">=2.30"
+
+[lazy]
+# Static triggers let the host register the plugin without creating a VM.
+# Commands are plugin-qualified: `<plugin-id>:<resource>`.
+# All five commands and three events are unchanged from the bundled manifest.
+commands = [
+  "bitty-terminal.git-panel:open",
+  "bitty-terminal.git-panel:status",
+  "bitty-terminal.git-panel:diff",
+  "bitty-terminal.git-panel:log",
+  "bitty-terminal.git-panel:branch",
+]
+# Events the plugin subscribes to during activation. Observation events
+# refresh the cached snapshot-derived state; handlers never spawn.
+events = [
+  "terminal.cwd-changed",
+  "terminal.title-changed",
+  "focus.changed",
+]
