@@ -5,3 +5,9 @@
 {"created_at":"2026-09-15T18:29:25.962981022+00:00","id":"01M2K59ETBVTNQZC4J8K2SY7DG","kind":"include","pattern":"lua/git-panel/listing.lua","project_id":"01M2HS6NJS33WB36ACJ1B9QZVS","task_id":"01M2K591C2BQM4VRASG7SN3C3D"}
 {"created_at":"2026-09-15T18:29:25.979833876+00:00","id":"01M2K59ETV6ZXW7B195YY7W0H7","kind":"include","pattern":"lua/git-panel/scene.lua","project_id":"01M2HS6NJS33WB36ACJ1B9QZVS","task_id":"01M2K594124VRNYM1BQ4NAE909"}
 {"created_at":"2026-09-15T18:41:15.630932151+00:00","id":"01M2K5Z3VFN8XQF8JGFWZWERS9","kind":"include","pattern":"lua/git-panel/listing.lua","project_id":"01M2HS6NJS33WB36ACJ1B9QZVS","task_id":"01M2K594124VRNYM1BQ4NAE909"}
+{"created_at":"2026-09-15T22:48:01.311446213+00:00","id":"01M2KM2YGZSYW9BT088B93ACHR","kind":"include","pattern":"lua/git-panel/allowlist.lua","project_id":"01M2HS6NJS33WB36ACJ1B9QZVS","task_id":"01M2KM2SJQJDGBGKRYQ9M4NN5Z"}
+{"created_at":"2026-09-15T22:48:01.350878198+00:00","id":"01M2KM2YJ60GPCV38VHZPBYR9D","kind":"include","pattern":"lua/git-panel/init.lua","project_id":"01M2HS6NJS33WB36ACJ1B9QZVS","task_id":"01M2KM2SJQJDGBGKRYQ9M4NN5Z"}
+{"created_at":"2026-09-15T22:48:01.389427+00:00","id":"01M2KM2YKD9B3EX7ZKVQS8FY8N","kind":"include","pattern":"tests","project_id":"01M2HS6NJS33WB36ACJ1B9QZVS","task_id":"01M2KM2SJQJDGBGKRYQ9M4NN5Z"}
+{"created_at":"2026-09-15T22:48:01.420779521+00:00","id":"01M2KM2YMCRSA5KQQV3713DX3F","kind":"include","pattern":"justfile","project_id":"01M2HS6NJS33WB36ACJ1B9QZVS","task_id":"01M2KM2SJQJDGBGKRYQ9M4NN5Z"}
+{"created_at":"2026-09-15T22:48:01.455189473+00:00","id":"01M2KM2YNFV4TTP3WWRMEVKECG","kind":"include","pattern":"README.md","project_id":"01M2HS6NJS33WB36ACJ1B9QZVS","task_id":"01M2KM2SJQJDGBGKRYQ9M4NN5Z"}
+{"created_at":"2026-09-15T22:48:01.489998812+00:00","id":"01M2KM2YPJPAA803CDQENNWBS5","kind":"include","pattern":"CHANGELOG.md","project_id":"01M2HS6NJS33WB36ACJ1B9QZVS","task_id":"01M2KM2SJQJDGBGKRYQ9M4NN5Z"}
