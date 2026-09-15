@@ -99,6 +99,19 @@ end
 -- by the host, and output is capped to the panel payload bound. Never
 -- `os.execute`, `io.popen`, or a native module (denied by the Lua Runtime
 -- restricted library).
+--
+-- R17: the raw output is truncated to `MAX_SPAWN_OUTPUT_BYTES` (8 KiB)
+-- before any parsing, and the truncation is recorded in the module-level
+-- truncation bit (`last_spawn_truncated`); callers keep their own
+-- display-limit truncation (`listing.MAX_ENTRIES` / `MAX_COMMITS`).
+M.MAX_SPAWN_OUTPUT_BYTES = 8192
+
+local last_spawn_truncated = false
+
+function M.last_spawn_truncated()
+  return last_spawn_truncated
+end
+
 local function spawn_git(args)
   if not allowlist.is_allowed_args(args) then
     fail("E_SPAWN_DENIED", "git invocation is outside the [tools.git] allowlist")
@@ -112,11 +125,20 @@ local function spawn_git(args)
   if type(process_ns) ~= "table" or type(process_ns.spawn) ~= "function" then
     fail("E_SPAWN_UNAVAILABLE", "host has no process.spawn surface yet")
   end
-  local result = process_ns.spawn(args)
+  -- H-GP-02: run git in the pane's repository, not the host root. A nil cwd
+  -- (no snapshot observed yet) leaves the key absent-equivalent for the host.
+  local result = process_ns.spawn(args, { cwd = cache.cwd })
   if type(result) ~= "table" or type(result.output) ~= "string" then
     fail("E_SPAWN_FAILED", "spawn returned no bounded output")
   end
-  return result.output
+  local output = result.output
+  if #output > M.MAX_SPAWN_OUTPUT_BYTES then
+    output = string.sub(output, 1, M.MAX_SPAWN_OUTPUT_BYTES)
+    last_spawn_truncated = true
+  else
+    last_spawn_truncated = false
+  end
+  return output
 end
 
 local PORCELAIN_STATUS = {
@@ -130,6 +152,58 @@ local PORCELAIN_STATUS = {
   ["!"] = "ignored",
 }
 
+-- Unwrap git C-style quote-wrapping (`"my file.txt"`, octal escapes such
+-- as `"caf\303\251.txt"`). Unquoted paths pass through untouched; a
+-- malformed wrapping yields `nil` (fail-closed downstream).
+local function unquote_git_path(path)
+  if path == nil then
+    return nil
+  end
+  if #path < 2 or string.sub(path, 1, 1) ~= '"' or string.sub(path, -1) ~= '"' then
+    return path
+  end
+  local inner = string.sub(path, 2, -2)
+  inner = string.gsub(inner, "\\(%d%d%d)", function(octal)
+    local byte = tonumber(octal, 8)
+    if byte == nil or byte > 255 then
+      return "\\" .. octal
+    end
+    return string.char(byte)
+  end)
+  inner = string.gsub(inner, "\\(.)", function(escaped)
+    if escaped == "a" then
+      return "\a"
+    elseif escaped == "b" then
+      return "\b"
+    elseif escaped == "f" then
+      return "\f"
+    elseif escaped == "n" then
+      return "\n"
+    elseif escaped == "r" then
+      return "\r"
+    elseif escaped == "t" then
+      return "\t"
+    elseif escaped == "v" then
+      return "\v"
+    end
+    return escaped
+  end)
+  return inner
+end
+
+-- Sane XY two-column semantics for porcelain v1: either column may carry
+-- the change (` M` worktree-modified, `A ` staged-added), while unmerged
+-- combinations (`U` in either column, `AA`, `DD`) report conflicted.
+local function porcelain_status(x, y)
+  if x == "U" or y == "U" then
+    return "conflicted"
+  end
+  if (x == "A" and y == "A") or (x == "D" and y == "D") then
+    return "conflicted"
+  end
+  return PORCELAIN_STATUS[x] or PORCELAIN_STATUS[y]
+end
+
 local function parse_porcelain(output)
   local paths = {}
   for line in string.gmatch(output or "", "[^\n]+") do
@@ -137,18 +211,34 @@ local function parse_porcelain(output)
     -- (` M` is a worktree modification, `A ` a staged addition).
     local x = string.sub(line, 1, 1)
     local y = string.sub(line, 2, 2)
-    local path = string.match(line, "^..%s+(.-)%s*$")
-    local status = PORCELAIN_STATUS[x] or PORCELAIN_STATUS[y]
-    if path ~= nil and status ~= nil then
-      paths[#paths + 1] = { path = path, status = status }
+    local rest = string.match(line, "^..%s+(.-)%s*$")
+    local status = porcelain_status(x, y)
+    if rest ~= nil and status ~= nil then
+      local path = rest
+      if status == "renamed" or status == "copied" then
+        -- R18: renames/copies carry `old -> new`; the panel tracks the
+        -- post-image. The first capture is greedy so a quoted ` -> `
+        -- inside a name still splits at the separator.
+        local _, new = string.match(rest, "^(.*) %-> (.-)$")
+        if new ~= nil then
+          path = new
+        end
+      end
+      path = unquote_git_path(path)
+      if path ~= nil and path ~= "" then
+        paths[#paths + 1] = { path = path, status = status }
+      end
     end
   end
   return paths
 end
 
-local function status_entries()
-  refresh_cache()
-  local output = spawn_git({ "status", "--porcelain" })
+-- H-GP-01: resolve the parsed porcelain paths against the cached
+-- repository root before scope checks. Relative means relative to the
+-- repository root; `listing.list_status_entries` joins with `root` and
+-- validates, so arbitrary roots work (not just the grant prefix) while
+-- absolute out-of-scope paths and `..` escapes still drop fail-closed.
+local function status_entries_from_output(output, root)
   local grouped = {}
   for _, item in ipairs(parse_porcelain(output)) do
     grouped[item.status] = grouped[item.status] or {}
@@ -156,7 +246,7 @@ local function status_entries()
   end
   local entries = {}
   for status, paths in pairs(grouped) do
-    for _, entry in ipairs(listing.list_status_entries(paths, status)) do
+    for _, entry in ipairs(listing.list_status_entries(paths, status, { root = root })) do
       entries[#entries + 1] = entry
     end
   end
@@ -169,14 +259,24 @@ local function status_entries()
   return entries
 end
 
-local function branch_list()
+local function status_entries()
   refresh_cache()
-  local output = spawn_git({ "branch", "-a" })
+  local output = spawn_git({ "status", "--porcelain" })
+  return status_entries_from_output(output, cache.cwd)
+end
+
+local function branch_list_from_output(output)
   local raw = {}
   for line in string.gmatch(output or "", "[^\n]+") do
     raw[#raw + 1] = line
   end
   return listing.list_branches(raw)
+end
+
+local function branch_list()
+  refresh_cache()
+  local output = spawn_git({ "branch", "-a" })
+  return branch_list_from_output(output)
 end
 
 local function commit_list()
@@ -210,8 +310,11 @@ bitty.commands.register({
   title = "Git Panel: open",
   description = "Open the git panel with the cached working-tree summary.",
   run = function(_args)
-    local branches = branch_list()
-    local entries = status_entries()
+    -- M-GP-06: exactly one snapshot per open; the shared cache serves both
+    -- the branch and the status derivations below (no per-listing refresh).
+    refresh_cache()
+    local branches = branch_list_from_output(spawn_git({ "branch", "-a" }))
+    local entries = status_entries_from_output(spawn_git({ "status", "--porcelain" }), cache.cwd)
     return {
       cwd = cache.cwd,
       branches = #branches,

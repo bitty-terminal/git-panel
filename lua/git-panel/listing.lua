@@ -4,9 +4,11 @@
 -- realization (`bitty-runtime/src/git_panel.rs`, removed by `bitty`
 -- CTX-0400): branch names follow the simplified `git check-ref-format`
 -- shape plus spawn-safety rejection of shell metacharacters, commit hashes
--- are `7..40` hex characters, and every listing is sorted deterministically,
--- deduplicated, and truncated to its bound (`128` status entries, `64`
--- commits, `32` branches, `128`-char names, `256`-char messages). Filters
+-- are `7..40` hex characters, and every listing is deduplicated and
+-- truncated to its bound (`128` status entries, `64`
+-- commits, `32` branches, `128`-char names, `256`-char messages). Branches
+-- and status entries sort deterministically; commits preserve the
+-- reverse-chronological `git log` input order (R19). Filters
 -- are case-insensitive substring matches bounded to the listing cap.
 
 local scope = require("git-panel.scope")
@@ -203,16 +205,37 @@ end
 -- Filter and bound a raw path listing to `MAX_ENTRIES` status entries with
 -- `status`, sorted deterministically and deduplicated by path. Paths outside
 -- the granted read scope are dropped (fail-closed). Pure.
-function M.list_status_entries(raw, status)
+--
+-- H-GP-01: `git status --porcelain` emits repo-root-relative paths, which
+-- never satisfy the host-absolute grant check. Pass `{ root = <repo root> }`
+-- (the pane's cached cwd) so relative paths resolve against the repository
+-- root before validation: joined, then admitted only when within the root.
+-- Relative paths without a root, and absolute paths outside the grant scope,
+-- are still dropped fail-closed. Entry paths for resolved relatives are the
+-- joined host-absolute form.
+function M.list_status_entries(raw, status, opts)
   if M.FILE_STATUSES[status] ~= true then
     return {}
+  end
+  local root = nil
+  if type(opts) == "table" and type(opts.root) == "string" and opts.root ~= "" then
+    root = opts.root
   end
   local entries = {}
   local seen = {}
   for _, path in ipairs(raw or {}) do
-    if scope.is_within_repo(path) and not seen[path] then
-      seen[path] = true
-      entries[#entries + 1] = { path = path, status = status }
+    local candidate = nil
+    if type(path) == "string" and not scope.is_absolute_path(path) and root ~= nil then
+      local joined = scope.join_root(root, path)
+      if joined ~= nil and scope.is_within_root(root, joined) then
+        candidate = joined
+      end
+    elseif scope.is_within_repo(path) then
+      candidate = path
+    end
+    if candidate ~= nil and not seen[candidate] then
+      seen[candidate] = true
+      entries[#entries + 1] = { path = candidate, status = status }
     end
   end
   table.sort(entries, function(a, b)
@@ -241,7 +264,10 @@ function M.filter_status_entries(entries, query)
 end
 
 -- Filter and bound raw `{ hash, message }` commits to `MAX_COMMITS` valid
--- commits, deduplicated by hash and sorted by hash. Messages truncate to
+-- commits, deduplicated by hash with the input order preserved. R19: the
+-- input arrives reverse-chronological from `git log` and must stay that way;
+-- no hash re-sort happens here. A hash-sorted presentation is a display-only
+-- concern for callers (see `sorted_commits_by_hash`). Messages truncate to
 -- `MAX_COMMIT_MESSAGE_CHARS` at a code-point boundary. Pure.
 function M.list_commits(raw)
   local commits = {}
@@ -258,13 +284,23 @@ function M.list_commits(raw)
       }
     end
   end
-  table.sort(commits, function(a, b)
-    return a.hash < b.hash
-  end)
   while #commits > M.MAX_COMMITS do
     commits[#commits] = nil
   end
   return commits
+end
+
+-- Display-only hash-sorted view over an already-bounded commit list. Pure;
+-- never used by the ingestion path, which preserves `git log` order (R19).
+function M.sorted_commits_by_hash(commits)
+  local view = {}
+  for _, commit in ipairs(commits or {}) do
+    view[#view + 1] = commit
+  end
+  table.sort(view, function(a, b)
+    return a.hash < b.hash
+  end)
+  return view
 end
 
 -- Case-insensitive substring filter over commit hashes and messages,
