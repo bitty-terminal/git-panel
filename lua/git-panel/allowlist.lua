@@ -7,7 +7,9 @@
 -- exactly the seven read-only verbs of the accepted Layer 2 `[tools.git]`
 -- slice (CTX-0425), at most `32` args of at most `256` bytes each with at
 -- most `8 KiB` total, no null/control characters, no shell metacharacters,
--- and no risky flags. Anything else fails closed.
+-- and default-deny for `-`-leading flags (only the read-only
+-- `ALLOWED_FLAGS` table passes, with explicit risky-flag blocks kept for
+-- clarity). Anything else fails closed.
 --
 -- Capability string is exactly `process.spawn:git`: the closed
 -- `process.spawn` family plus the `:git` parameter. Spawn goes through the
@@ -32,6 +34,28 @@ M.ALLOWED_SUBCOMMANDS = {
 M.MAX_ARGS = 32
 M.MAX_ARG_BYTES = 256
 M.MAX_TOTAL_BYTES = 8192
+
+-- Read-only flags the plugin actually uses: every `-`-leading string passed
+-- to `spawn_git` (`status --porcelain`, `branch -a`, `log --oneline -n 10`,
+-- `diff --stat`) plus the read-only shapes the spec covers for the remaining
+-- verbs (`rev-parse --abbrev-ref`, `ls-files --others`). Everything else
+-- starting with `-` fails closed, which blocks read-to-write escapes such as
+-- `--output`, `--index-file`, `--work-tree`, `--git-dir`, `-o`,
+-- `--ext-diff`, and `--textconv`.
+M.ALLOWED_FLAGS = {
+  "--porcelain",
+  "--stat",
+  "--oneline",
+  "-n",
+  "-a",
+  "--others",
+  "--abbrev-ref",
+}
+
+local ALLOWED_FLAG_SET = {}
+for _, flag in ipairs(M.ALLOWED_FLAGS) do
+  ALLOWED_FLAG_SET[flag] = true
+end
 
 local RISKY_FLAGS = {
   ["--upload-pack"] = true,
@@ -90,9 +114,17 @@ local function is_risky_flag(arg)
   return false
 end
 
+-- Default-deny for `-`-leading flags: only the read-only `ALLOWED_FLAGS`
+-- table passes. Non-flag operands (hashes, `HEAD`, counts such as the `10`
+-- in `log --oneline -n 10`) never reach this branch.
+local function is_unknown_flag(arg)
+  return string.sub(arg, 1, 1) == "-" and not ALLOWED_FLAG_SET[arg]
+end
+
 -- Whether `args` is an allowlisted `git` invocation under `[tools.git]`.
 -- Fails closed: empty, over-count, over-long, over-total, denied bytes,
--- non-allowlisted first-arg subcommand, or risky flags all deny.
+-- non-allowlisted first-arg subcommand, risky flags, or any other
+-- `-`-leading flag all deny.
 function M.is_allowed_args(args)
   if type(args) ~= "table" or #args == 0 then
     return false
@@ -121,6 +153,9 @@ function M.is_allowed_args(args)
   end
   for _, arg in ipairs(args) do
     if is_risky_flag(arg) then
+      return false
+    end
+    if is_unknown_flag(arg) then
       return false
     end
   end
