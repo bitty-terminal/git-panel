@@ -1,0 +1,7 @@
+{"created_at":"2026-09-15T18:29:25.875313421+00:00","id":"01M2K59EQKNC76QAJ7ZH9YAWVY","kind":"include","pattern":"lua/git-panel/allowlist.lua","project_id":"01M2HS6NJS33WB36ACJ1B9QZVS","task_id":"01M2K591B7HSYKJ1JX9D2640CZ"}
+{"created_at":"2026-09-15T18:29:25.899449891+00:00","id":"01M2K59ERBGDP87VKR186R1FKY","kind":"include","pattern":"tests/spec/allowlist_spec.lua","project_id":"01M2HS6NJS33WB36ACJ1B9QZVS","task_id":"01M2K591B7HSYKJ1JX9D2640CZ"}
+{"created_at":"2026-09-15T18:29:25.921329319+00:00","id":"01M2K59ES1V8MMD1MGC0MYC814","kind":"include","pattern":"lua/git-panel/init.lua","project_id":"01M2HS6NJS33WB36ACJ1B9QZVS","task_id":"01M2K591C2BQM4VRASG7SN3C3D"}
+{"created_at":"2026-09-15T18:29:25.944942549+00:00","id":"01M2K59ESSQ0X1P5EH1VDHKDNG","kind":"include","pattern":"lua/git-panel/scope.lua","project_id":"01M2HS6NJS33WB36ACJ1B9QZVS","task_id":"01M2K591C2BQM4VRASG7SN3C3D"}
+{"created_at":"2026-09-15T18:29:25.962981022+00:00","id":"01M2K59ETBVTNQZC4J8K2SY7DG","kind":"include","pattern":"lua/git-panel/listing.lua","project_id":"01M2HS6NJS33WB36ACJ1B9QZVS","task_id":"01M2K591C2BQM4VRASG7SN3C3D"}
+{"created_at":"2026-09-15T18:29:25.979833876+00:00","id":"01M2K59ETV6ZXW7B195YY7W0H7","kind":"include","pattern":"lua/git-panel/scene.lua","project_id":"01M2HS6NJS33WB36ACJ1B9QZVS","task_id":"01M2K594124VRNYM1BQ4NAE909"}
+{"created_at":"2026-09-15T18:41:15.630932151+00:00","id":"01M2K5Z3VFN8XQF8JGFWZWERS9","kind":"include","pattern":"lua/git-panel/listing.lua","project_id":"01M2HS6NJS33WB36ACJ1B9QZVS","task_id":"01M2K594124VRNYM1BQ4NAE909"}
