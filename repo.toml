@@ -1,0 +1,13 @@
+# git-panel: workspace identity descriptor (kind/lang/role mirror workspace.toml).
+[repo]
+name = "git-panel"
+kind = "plugin"
+lang = "lua/ts"
+role = "independent plugin: git status panel"
+owner = "TBD"
+docs = "bitty-plugins-docs"
+
+[contracts.consumes]
+manifest-v1 = "OQ-012 plugin-platform-rfc" # bitty-plugin.toml header
+plugin-api-v1 = "ADR-0009 Lua Surface" # lua/git-panel/init.lua cites Plugin API v1
+tools-git = "CTX-0425 Layer 2 slice" # accepted [tools.git] slice
