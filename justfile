@@ -81,8 +81,13 @@ test-luals:
 test-manifest:
     bun tests/check-manifest-lint.mjs
 
+# Negative-fixture gate: the transitional manifest validator must reject every
+# known-bad `validator-negative/*.toml` and accept the `base.toml` control.
+test-negative:
+    bun tests/check-negative-fixtures.mjs
+
 # Run all behavior and conformance tests.
-test: test-lua test-luals test-manifest
+test: test-lua test-luals test-manifest test-negative
 
 # Aggregate gate run locally and in CI.
 check: lint fmt-check manifest lua test

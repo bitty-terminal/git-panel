@@ -103,7 +103,9 @@ end
 -- R17: the raw output is truncated to `MAX_SPAWN_OUTPUT_BYTES` (8 KiB)
 -- before any parsing, and the truncation is recorded in the module-level
 -- truncation bit (`last_spawn_truncated`); callers keep their own
--- display-limit truncation (`listing.MAX_ENTRIES` / `MAX_COMMITS`).
+-- display-limit truncation (`listing.MAX_ENTRIES` / `MAX_COMMITS`). A cut
+-- that lands mid-line drops the trailing partial line so a fragment is
+-- never parsed as an entry; the bound and the bit semantics are unchanged.
 M.MAX_SPAWN_OUTPUT_BYTES = 8192
 
 local last_spawn_truncated = false
@@ -134,6 +136,17 @@ local function spawn_git(args)
   local output = result.output
   if #output > M.MAX_SPAWN_OUTPUT_BYTES then
     output = string.sub(output, 1, M.MAX_SPAWN_OUTPUT_BYTES)
+    -- R17: the cut can land mid-line, so drop the trailing partial line
+    -- before any caller parses it; a fragment must never appear as an
+    -- entry. When the cut coincides with a newline the last line is whole
+    -- and is kept, and when no complete line survives at all the payload
+    -- is empty.
+    local last_newline = string.find(output, "\n[^\n]*$")
+    if last_newline == nil then
+      output = ""
+    else
+      output = string.sub(output, 1, last_newline)
+    end
     last_spawn_truncated = true
   else
     last_spawn_truncated = false

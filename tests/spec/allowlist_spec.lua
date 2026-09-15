@@ -31,6 +31,29 @@ function M.run(context)
   tap.ok(not allowlist.is_allowed_args({ "fetch" }), "denies fetch")
   tap.ok(not allowlist.is_allowed_args({}), "denies empty args")
 
+  -- Null-hole hardening: `ipairs` stops at the first `nil`, so a sparse
+  -- sequence could smuggle a denied trailing flag past the loops; the
+  -- dense-sequence check must reject any hole or non-string member while
+  -- still admitting a legitimate hole-free list.
+  tap.ok(
+    not allowlist.is_allowed_args({ "status", nil, "--output" }),
+    "denies nil hole before denied flag"
+  )
+  tap.ok(
+    not allowlist.is_allowed_args({ "status", nil, "--porcelain" }),
+    "denies nil hole before allowed flag"
+  )
+  tap.ok(not allowlist.is_allowed_args({ "status", 42 }), "denies non-string member")
+  tap.ok(not allowlist.is_allowed_args({ "status", true }), "denies boolean member")
+  tap.ok(
+    not allowlist.is_allowed_args({ "log", nil, "--oneline", "-n", "10" }),
+    "denies hole inside args"
+  )
+  tap.ok(
+    allowlist.is_allowed_args({ "rev-parse", "--abbrev-ref", "HEAD" }),
+    "legitimate hole-free list still passes"
+  )
+
   local many = { "status" }
   for i = 1, allowlist.MAX_ARGS + 1 do
     many[#many + 1] = "arg" .. i

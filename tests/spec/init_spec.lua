@@ -284,6 +284,44 @@ local function run(context)
     tap.ok(not plugin.last_spawn_truncated(), "small output clears truncation bit")
   end
 
+  -- R17 half-line: a truncation that lands mid-line must drop the partial
+  -- trailing line so the fragment is never served as an entry.
+  do
+    local host = full_host()
+    local plugin = activate(host)
+    local bound = plugin.MAX_SPAWN_OUTPUT_BYTES
+    local phantom_line = " M ~/projects/phantom.txt"
+    -- Bytes of the phantom line left before the cut: enough for ` M ` plus a
+    -- partial in-scope `~/projects/` path to look like a real entry.
+    local keep = 24
+    tap.ok(keep < #phantom_line, "fixture keeps a parseable phantom prefix")
+    local function fill_to(length)
+      local chunk = " M ~/projects/fill.txt\n"
+      local out = string.rep(chunk, math.floor(length / #chunk))
+      local rest = length - #out
+      if rest > 0 then
+        out = out .. string.rep("a", rest - 1) .. "\n"
+      end
+      return out
+    end
+    local head = fill_to(bound - keep)
+    tap.equal(#head, bound - keep, "head fills exactly to the cut margin")
+    local output = head .. phantom_line .. "\n"
+    tap.ok(#output > bound, "fixture exceeds the 8 KiB bound")
+    host.bitty.process.spawn = function(_args, _opts)
+      return { status = 0, output = output }
+    end
+    local entries = host:run("status", {})
+    tap.ok(plugin.last_spawn_truncated(), "mid-line truncation sets the truncation bit")
+    local phantom_served = false
+    for _, entry in ipairs(entries) do
+      if string.find(entry.path, "phantom", 1, true) ~= nil then
+        phantom_served = true
+      end
+    end
+    tap.ok(not phantom_served, "partial trailing line is not served")
+  end
+
   -- M-GP-06: open snapshots exactly once and shares it between the branch
   -- and status derivations.
   do
