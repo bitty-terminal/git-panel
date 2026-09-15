@@ -38,8 +38,13 @@ function M.is_within_repo(path)
   if string.sub(path, 1, 11) ~= "~/projects/" then
     return false
   end
-  if string.find(path, "..", 1, true) ~= nil then
-    return false
+  -- R15: reject only exact `..` segments so legit names containing two
+  -- dots (`a..b`, `backup..tar.gz`) stay admitted while `..`, `../x`,
+  -- and `x/../y` traversal stays denied.
+  for segment in string.gmatch(path, "[^/]+") do
+    if segment == ".." then
+      return false
+    end
   end
   return true
 end
@@ -47,6 +52,97 @@ end
 -- Alias for the repo-scope check: `candidate` must satisfy `is_within_repo`.
 function M.is_fs_allowed(candidate)
   return M.is_within_repo(candidate)
+end
+
+-- True for host-absolute paths (`/...`, `~/...`). Everything else is
+-- repo-root-relative per the H-GP-01 definition: `git status --porcelain`
+-- emits paths relative to the repository root.
+function M.is_absolute_path(path)
+  if type(path) ~= "string" or path == "" then
+    return false
+  end
+  local first = string.sub(path, 1, 1)
+  return first == "/" or first == "~"
+end
+
+-- True when `candidate` equals `root` or nests strictly under it. The
+-- boundary is segment-wise (`root .. "/"`), so a sibling such as
+-- `<root>2/x` never prefix-matches, and any `..` segment fails closed.
+-- Unlike `is_within_repo`, the root is a parameter, so repositories rooted
+-- anywhere (not just the `~/projects/` grant prefix) are supported.
+function M.is_within_root(root, candidate)
+  if not M.is_valid_path(root) or not M.is_valid_path(candidate) then
+    return false
+  end
+  local base = string.gsub(root, "/+$", "")
+  if base == "" then
+    base = "/"
+  end
+  for segment in string.gmatch(base, "[^/]+") do
+    if segment == ".." then
+      return false
+    end
+  end
+  if candidate == base then
+    return true
+  end
+  if string.sub(candidate, 1, #base) ~= base then
+    return false
+  end
+  if string.sub(candidate, #base + 1, #base + 1) ~= "/" then
+    return false
+  end
+  for segment in string.gmatch(candidate, "[^/]+") do
+    if segment == ".." then
+      return false
+    end
+  end
+  return true
+end
+
+-- Join repo-root-relative `rel` onto `root` (H-GP-01: relative means
+-- relative to the repository root). Returns the joined path, or `nil`
+-- fail-closed when either side is invalid, `rel` is absolute, or `..`
+-- would escape `root` (`.` segments normalize away). A `rel` resolving
+-- to the root itself (`.`, empty segments) also yields `nil`: a status
+-- entry must name a path under the root.
+function M.join_root(root, rel)
+  if not M.is_valid_path(root) or not M.is_valid_path(rel) then
+    return nil
+  end
+  if M.is_absolute_path(rel) then
+    return nil
+  end
+  local base = string.gsub(root, "/+$", "")
+  if base == "" then
+    base = "/"
+  end
+  for segment in string.gmatch(base, "[^/]+") do
+    if segment == ".." then
+      return nil
+    end
+  end
+  local parts = {}
+  for segment in string.gmatch(rel, "[^/]+") do
+    if segment == "." then
+      -- normalize away
+    elseif segment == ".." then
+      if #parts == 0 then
+        return nil
+      end
+      parts[#parts] = nil
+    else
+      parts[#parts + 1] = segment
+    end
+  end
+  if #parts == 0 then
+    return nil
+  end
+  local joined = base .. "/" .. table.concat(parts, "/")
+  if not M.is_valid_path(joined) then
+    return nil
+  end
+  return joined
 end
 
 -- Validated read scope, or `nil` when outside the grant (fail-closed).

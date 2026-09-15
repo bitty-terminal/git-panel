@@ -62,15 +62,36 @@ function M.run(context)
   tap.equal(#listing.list_status_entries(many_status, "modified"), listing.MAX_ENTRIES, "status bounded at 128")
   tap.equal(#listing.filter_status_entries(status, "foo"), 1, "status filter matches")
 
+  -- H-GP-01: repo-root-relative paths resolve against the given root,
+  -- including roots outside the granted prefix; without a root they drop.
+  local rooted = listing.list_status_entries({ "src/lib.rs", "README.md" }, "modified", {
+    root = "~/projects/foo",
+  })
+  tap.equal(#rooted, 2, "relative paths resolve against root")
+  tap.equal(rooted[1].path, "~/projects/foo/README.md", "resolved path sorted first")
+  tap.equal(rooted[2].path, "~/projects/foo/src/lib.rs", "resolved path joined")
+  local anywhere = listing.list_status_entries({ "src/lib.rs" }, "modified", { root = "/srv/git/repo" })
+  tap.equal(#anywhere, 1, "arbitrary root supported")
+  tap.equal(anywhere[1].path, "/srv/git/repo/src/lib.rs", "arbitrary root joined")
+  tap.equal(#listing.list_status_entries({ "../evil", "/etc/passwd" }, "modified", { root = "/srv/git/repo" }), 0, "escape and outside dropped")
+  tap.equal(#listing.list_status_entries({ "src/lib.rs" }, "modified"), 0, "relative without root dropped")
+  tap.equal(#listing.list_status_entries({ "src/lib.rs" }, "modified", { root = "../evil" }), 0, "traversal root dropped")
+
+  -- R19: `git log` reverse-chronological input order is preserved; no
+  -- hash re-sort. The input here is deliberately not hash-sorted.
   local commits = listing.list_commits({
-    { hash = "abc1234", message = "fix bug" },
     { hash = "def5678", message = "add feature" },
     { hash = "abc1234", message = "fix bug" },
+    { hash = "def5678", message = "add feature" },
     { hash = "zzzzzzz", message = "bad hash" },
   })
   tap.equal(#commits, 2, "commits deduped and invalid filtered")
-  tap.equal(commits[1].hash, "abc1234", "commits sorted by hash")
-  tap.equal(commits[1].short_hash, "abc1234", "short hash derived")
+  tap.equal(commits[1].hash, "def5678", "input order preserved, not hash-sorted")
+  tap.equal(commits[2].hash, "abc1234", "second input second")
+  tap.equal(commits[1].short_hash, "def5678", "short hash derived")
+  local sorted_view = listing.sorted_commits_by_hash(commits)
+  tap.equal(sorted_view[1].hash, "abc1234", "sorted view orders by hash")
+  tap.equal(commits[1].hash, "def5678", "sorted view leaves input order alone")
 
   local many_commits = {}
   for i = 1, 100 do
