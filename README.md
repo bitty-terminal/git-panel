@@ -37,8 +37,9 @@ spawn bridge. Nothing here is a compatibility promise beyond the manifest
 | `lua/git-panel/scope.lua`       | Host-free working-tree read-scope checks (`~/projects/**`).                                             |
 | `lua/git-panel/listing.lua`     | Host-free bounded branch/status/commit listings and filters.                                            |
 | `lua/git-panel/scene.lua`       | Declarative `List`/`Text` panel composition.                                                            |
-| `tests/`                        | Lua 5.4 behavior suite, LuaLS conformance, and the SDK manifest-lint wrapper.                           |
+| `tests/`                        | Lua 5.4 behavior suite, LuaLS conformance, and the SDK-lint and negative-fixture wrappers.              |
 | `scripts/validate-manifest.mjs` | Transitional manifest check with `[tools.git]` support; `bitty-plugin-lint` (R-SDK-2) is authoritative. |
+| `validator-negative/`           | Known-bad manifests the transitional validator must reject; `base.toml` is the accepted control.        |
 | `justfile`                      | Quality gates with pinned tool versions.                                                                |
 
 ## Behavior
@@ -51,16 +52,21 @@ The plugin keeps the bundled git-panel behavior and bounds (OQ-053 split,
   `rev-parse`, `ls-files`. Write verbs (`commit`, `push`, `reset`, mutating
   `checkout`, etc.) are absent; staging or commit UX needs explicit user
   action plus a broader grant;
-- spawn shape fails closed on: empty args, more than `32` args, any arg over
-  `256` bytes, `8 KiB` total args, null/control characters, shell
-  metacharacters (semicolon, ampersand, pipe, backtick, dollar, parens,
-  angle brackets, backslash, double and single quotes), a non-allowlisted
-  subcommand, or risky flags (`--upload-pack`, `--receive-pack`, `--exec`);
+- spawn shape fails closed on: empty args, a sparse argument table or any
+  non-string member (a `nil` hole must not hide a later flag), more than `32`
+  args, any arg over `256` bytes, `8 KiB` total args, null/control
+  characters, shell metacharacters (semicolon, ampersand, pipe, backtick,
+  dollar, parens, angle brackets, backslash, double and single quotes), a
+  non-allowlisted subcommand, or risky flags (`--upload-pack`,
+  `--receive-pack`, `--exec`);
 - listings truncate deterministically after sorting and deduplication: `128`
   status entries, `64` commits, `32` branches, `64` selected items; names at
   `128` chars, commit messages at `256` chars, paths at `4096` bytes;
 - panel observation payloads are bounded to `8 KiB` at the bus admission
   boundary;
+- raw `git` output is truncated to `8 KiB` before parsing; a cut that lands
+  mid-line drops the partial trailing line so a fragment is never parsed as
+  an entry (`last_spawn_truncated` still records that truncation happened);
 - `git` outputs are piped to panel UI, never raw PTY injection; reflected
   terminal bytes are untrusted surfaces counted under the requesting
   generation;
@@ -107,9 +113,11 @@ just check
 ```
 
 `just check` runs Markdown lint, Prettier format check, the transitional
-manifest validator, the pinned Lua parser, and the Lua/LuaLS/SDK-manifest test
-suites. `lua5.4` is required for the behavior suite; `lua-language-server` and
-`bitty-plugin-lint` are optional and their checks skip with exit 0 when absent.
+manifest validator, the pinned Lua parser, and the
+Lua/LuaLS/SDK-manifest/negative-fixture test suites. `lua5.4` is required for
+the behavior suite; `lua-language-server` and `bitty-plugin-lint` are optional
+and their checks skip with exit 0 when absent; the negative-fixture gate
+(`just test-negative`) always runs.
 
 ## Install
 
