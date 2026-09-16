@@ -4,7 +4,7 @@
 
 - This is the independent `git-panel` repository. Its canonical remote is
   <https://github.com/bitty-terminal/git-panel>.
-- The Bitty umbrella directory and `bitty-plugins` directory are grouping only;
+- The Bitty umbrella directory and [`bitty-plugins`](https://github.com/bitty-terminal/bitty-plugins) directory are grouping only;
   neither owns this repository's Git or CarryCtx state.
 - Enter this repository before running Git, CarryCtx, validation, or toolchain
   commands.
