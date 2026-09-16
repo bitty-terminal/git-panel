@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Repository-metadata baseline:** added `.github/workflows/ci.yml`
+  (`Quality gates` plus `Lint GitHub Actions workflows`),
+  `.github/workflows/codeql.yml` (`actions` and `javascript-typescript`),
+  `.github/workflows/snapshot-source.yml`, `.github/dependabot.yml`,
+  `.github/codeql/codeql-config.yml`, and `.editorconfig`, mirroring the sibling
+  plugin repositories. The repository had no `.github/` before. Branch
+  protection is unchanged.
 - **Initial independent package (OQ-053, `bitty` CTX-0400):**
   `bitty-terminal.git-panel` extracted from the `bitty` bundled-disabled
   catalog into this repository with no identity change (id, capabilities,
