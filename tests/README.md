@@ -2,17 +2,21 @@
 
 Headless checks for the `lua/git-panel/**` implementation. `just check`
 (`lint` + `fmt-check` + `manifest` + `lua` + `test`) runs them locally and in
-CI; the individual suites are also available directly.
+CI; the individual suites are also available directly. `just install`
+materializes the commit-pinned dependencies; every check below is offline
+afterwards.
 
 ## Prerequisites
 
 - `lua5.4` (plugin VM baseline per ADR 0005) — required for behavior tests;
   CI installs it from the Ubuntu archive before `just check`.
-- `bun` — the manifest validator and the LuaLS/SDK-linter wrapper scripts.
+- `bun` — runs the test wrappers and the pinned `bitty-plugin-lint` and
+  `luaparse` binaries from the locked dependencies.
 - `lua-language-server` (optional) — LuaLS conformance; the check skips with
   exit 0 when it is unavailable (CI does not install it).
-- `bitty-plugin-lint` from `bitty-plugin-sdk` (optional) — authoritative
-  manifest check; skipped unless discoverable (CI does not install it).
+- `bitty-plugin-lint` from the pinned `bitty-plugin-sdk` (required) — the
+  manifest wrappers and the negative-fixture gate fail closed when it is
+  missing; run `just install` first.
 
 ## Commands
 
@@ -26,12 +30,13 @@ just test-lua
 # (LUA_LANGUAGE_SERVER=/path/to/server overrides discovery).
 just test-luals
 
-# Authoritative manifest check (SDK R-SDK-2);
-# BITTY_PLUGIN_LINT=/path/to/bitty-plugin-sdk/src/cli.ts forces the SDK CLI.
+# Authoritative SDK manifest report check (R-SDK-2, --json mode) against the
+# pinned dependency; BITTY_PLUGIN_LINT=/path/to/bitty-plugin-sdk/src/cli.ts
+# overrides the CLI entry.
 just test-manifest
 
-# Negative-fixture gate: the transitional manifest validator must reject
-# every validator-negative/*.toml fixture (base.toml is the accepted control).
+# Negative-fixture gate: the pinned SDK linter must reject every
+# validator-negative/*.toml fixture (base.toml is the accepted control).
 just test-negative
 ```
 
@@ -50,8 +55,9 @@ just test-negative
 | `lua-defs/bitty.d.lua`          | Vendored LuaLS definitions from bitty-plugin-sdk (origin/main `a7fcd2b`).                                  |
 | `lua-defs/negative-fixture.lua` | Excluded-surface fixture that LuaLS must reject.                                                           |
 | `check-lua-luals.mjs`           | Positive/negative LuaLS workspace check.                                                                   |
-| `check-manifest-lint.mjs`       | Runs `bitty-plugin-lint` when discoverable.                                                                |
-| `check-negative-fixtures.mjs`   | Rejects every `validator-negative/*.toml` fixture with the transitional validator.                         |
+| `check-manifest-lint.mjs`       | Asserts the pinned `bitty-plugin-lint` `--json` report says `bitty-plugin.toml` is valid.                  |
+| `check-negative-fixtures.mjs`   | Rejects every `validator-negative/*.toml` fixture with the pinned SDK linter and checks the diagnostic.    |
+| `../validator-negative/`        | Seven known-bad manifests (one SDK rule each) plus `base.toml`, the byte-identical accepted control.       |
 
 ## Known gaps
 
@@ -63,6 +69,7 @@ just test-negative
   `init_spec.lua` exercises spawn behavior against the local mock host only;
   in-host activation fails spawn-backed commands closed with
   `E_SPAWN_UNAVAILABLE` until the surface lands.
-- CI installs `lua5.4` but not `lua-language-server` or `bitty-plugin-lint`,
-  so those two wrappers report `skipped` (exit 0) in CI; install them locally,
-  or pin them into the workflow later, for full conformance coverage.
+- CI installs `lua5.4` and the pinned dependencies (including
+  `bitty-plugin-lint` via `bun install`), but not `lua-language-server`, so
+  only the LuaLS wrapper reports `skipped` (exit 0) in CI; install it locally
+  for full conformance coverage.

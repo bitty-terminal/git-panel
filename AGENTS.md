@@ -86,9 +86,9 @@
 - Never invoke formatters, linters, or parsers directly by name. Run gates
   through the justfile: `just check`, `just fmt`, `just lint`, `just manifest`,
   `just lua`, `just test`.
-- Version pins live in exactly one place per pin: the justfile for bunx tool
-  pins, `package.json` + `bun.lock` for installed dev dependencies. Do not bump
-  pins as a side effect of an unrelated task; report drift instead.
+- Version pins live in exactly one place per pin: `package.json` + `bun.lock`
+  for installed dev dependencies. Do not bump pins as a side effect of an
+  unrelated task; report drift instead.
 - CI success is a hard acceptance gate. Workflow-affecting changes are
   validated locally with `actionlint` before push.
 
