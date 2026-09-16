@@ -119,6 +119,25 @@ the behavior suite; `lua-language-server` and `bitty-plugin-lint` are optional
 and their checks skip with exit 0 when absent; the negative-fixture gate
 (`just test-negative`) always runs.
 
+## Continuous integration
+
+GitHub Actions runs the repository gates on pushes to `main` and pull requests:
+
+- `.github/workflows/ci.yml` — job `Quality gates` (Bun 1.4.0, Lua 5.4,
+  `just check`) plus a separate `Lint GitHub Actions workflows` job running the
+  pinned `actionlint`.
+- `.github/workflows/codeql.yml` — CodeQL `Analyze (actions)` and
+  `Analyze (javascript-typescript)` jobs; Lua has no CodeQL extractor.
+- `.github/workflows/snapshot-source.yml` — job `Snapshot source matches main`,
+  checking the in-repo CarryCtx publication at `refs/heads/carryctx-snapshots`
+  against `main`.
+
+`.github/dependabot.yml`, `.github/codeql/codeql-config.yml`, and
+`.editorconfig` complete the shared repository baseline. The metadata baseline
+is **Proposed** in the umbrella documentation and is not yet accepted; this
+adoption follows the repository-metadata task and does not assert acceptance.
+Branch protection is unchanged (this is the repository's first CI).
+
 ## Install
 
 An external package is installed from a local checkout with the Bitty CLI:
