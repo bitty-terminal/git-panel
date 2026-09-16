@@ -29,18 +29,19 @@ spawn bridge. Nothing here is a compatibility promise beyond the manifest
 
 ## Layout
 
-| Path                            | Purpose                                                                                                 |
-| ------------------------------- | ------------------------------------------------------------------------------------------------------- |
-| `bitty-plugin.toml`             | Static manifest: identity, compatibility, capability requests, `[tools.git]`, and lazy triggers.        |
-| `lua/git-panel/init.lua`        | Entry point evaluated once per activation; registers the five git commands and event handlers.          |
-| `lua/git-panel/allowlist.lua`   | Host-free `[tools.git]` spawn allowlist (seven verbs, fail-closed bounds).                              |
-| `lua/git-panel/scope.lua`       | Host-free working-tree read-scope checks (`~/projects/**`).                                             |
-| `lua/git-panel/listing.lua`     | Host-free bounded branch/status/commit listings and filters.                                            |
-| `lua/git-panel/scene.lua`       | Declarative `List`/`Text` panel composition.                                                            |
-| `tests/`                        | Lua 5.4 behavior suite, LuaLS conformance, and the SDK-lint and negative-fixture wrappers.              |
-| `scripts/validate-manifest.mjs` | Transitional manifest check with `[tools.git]` support; `bitty-plugin-lint` (R-SDK-2) is authoritative. |
-| `validator-negative/`           | Known-bad manifests the transitional validator must reject; `base.toml` is the accepted control.        |
-| `justfile`                      | Quality gates with pinned tool versions.                                                                |
+| Path                          | Purpose                                                                                          |
+| ----------------------------- | ------------------------------------------------------------------------------------------------ |
+| `bitty-plugin.toml`           | Static manifest: identity, compatibility, capability requests, `[tools.git]`, and lazy triggers. |
+| `lua/git-panel/init.lua`      | Entry point evaluated once per activation; registers the five git commands and event handlers.   |
+| `lua/git-panel/allowlist.lua` | Host-free `[tools.git]` spawn allowlist (seven verbs, fail-closed bounds).                       |
+| `lua/git-panel/scope.lua`     | Host-free working-tree read-scope checks (`~/projects/**`).                                      |
+| `lua/git-panel/listing.lua`   | Host-free bounded branch/status/commit listings and filters.                                     |
+| `lua/git-panel/scene.lua`     | Declarative `List`/`Text` panel composition.                                                     |
+| `tests/`                      | Lua 5.4 behavior suite, LuaLS conformance, and the SDK-lint and negative-fixture wrappers.       |
+| `package.json`                | Pinned dev dependencies: the authoritative `bitty-plugin-lint` (by commit) plus the gate tools.  |
+| `bun.lock`                    | Locked dependency graph installed by `just install`; the only network step.                      |
+| `validator-negative/`         | Known-bad manifests the pinned SDK linter must reject; `base.toml` is the accepted control.      |
+| `justfile`                    | Quality gates with pinned tool versions.                                                         |
 
 ## Behavior
 
@@ -90,15 +91,12 @@ bundled Rust realization already declared exactly this set.
   `E_SPAWN_UNAVAILABLE` until that surface lands. Tracked as a follow-up
   task in `bitty`.
 - **Host `[tools.*]` manifest-table enforcement.** The accepted `[tools.git]`
-  declaration is pinned by this package's transitional validator, but the
-  `bitty` install-path TOML subset reader accepts no `[tools.*]` table yet
-  (CTX-0425 records it as follow-up work under CTX-0400), and the
-  authoritative SDK linter (`bitty-plugin-lint`, R-SDK-2) still rejects the
-  `tools` key as unknown. Until both accept the slice, the grant binds the
-  declared `process.spawn:git` capability while tool presence/version
-  diagnostics stay with `bitty plugin doctor`, and `just test-manifest`
-  reports the SDK failure when the linter is discoverable (it skips in CI,
-  where the linter is not installed).
+  declaration is enforced by the pinned SDK linter (`bitty-plugin-lint`,
+  R-SDK-2), but the `bitty` install-path TOML subset reader accepts no
+  `[tools.*]` table yet (CTX-0425 records it as follow-up work under
+  CTX-0400). Until it does, the grant binds the declared `process.spawn:git`
+  capability while tool presence/version diagnostics stay with
+  `bitty plugin doctor`.
 - **Panel mounting from Lua.** Panel creation for Lua plugins follows the
   `panel.provider`/`panel.create` grant path; command handlers return bounded
   data rows and declarative scenes for the host panel surface.
@@ -108,16 +106,19 @@ bundled Rust realization already declared exactly this set.
 Run the same gate CI runs:
 
 ```sh
-bun install --frozen-lockfile
+just install
 just check
 ```
 
-`just check` runs Markdown lint, Prettier format check, the transitional
-manifest validator, the pinned Lua parser, and the
-Lua/LuaLS/SDK-manifest/negative-fixture test suites. `lua5.4` is required for
-the behavior suite; `lua-language-server` and `bitty-plugin-lint` are optional
-and their checks skip with exit 0 when absent; the negative-fixture gate
-(`just test-negative`) always runs.
+`just install` materializes the commit-pinned dependencies from `bun.lock` and
+is the only network step; every gate then runs offline. `just check` runs
+Markdown lint, Prettier format check, the manifest gate (`bitty-plugin-lint`
+from the pinned [bitty-plugin-sdk](https://github.com/bitty-terminal/bitty-plugin-sdk)),
+the pinned Lua parser, and the Lua/LuaLS/SDK-manifest/negative-fixture test
+suites. `lua5.4` is required for the behavior suite; `lua-language-server` is
+optional and its check skips with exit 0 when absent; the manifest gate and
+the negative-fixture gate (`just test-negative`) always run and fail closed
+through `just deps` when the pinned linter is not installed.
 
 ## Continuous integration
 

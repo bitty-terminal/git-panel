@@ -4,24 +4,22 @@
 # `docs/specifications/plugin-platform-rfc.md` (OQ-012). The plugin manager and
 # the host parse this file independently before any plugin code runs.
 #
-# `just manifest` validates this file; `bitty-plugin-lint` from
-# bitty-plugin-sdk (R-SDK-2) is the authoritative check against the same
-# accepted contract.
+# `just manifest` runs the pinned `bitty-plugin-lint` from bitty-plugin-sdk
+# (R-SDK-2), the authoritative check against the same accepted contract.
 #
-# The `[tools.rg]` declaration is the accepted Layer 2 slice (CTX-0425;
+# The `[tools.git]` declaration is the accepted Layer 2 slice (CTX-0425;
 # canonical record in bitty-plugins-docs
-# `specifications/plugin-reuse-and-providers.md`, accepted `[tools.rg]`
+# `specifications/plugin-reuse-and-providers.md`, accepted `[tools.git]`
 # contract v1). The rest of that reuse RFC stays draft: only this table is
 # accepted. Host-side `[tools.*]` table enforcement in the `bitty` install
-# path is follow-up work recorded in MIGRATION.md; the transitional
-# validator in `scripts/validate-manifest.mjs` already pins this shape
-# fail-closed.
+# path is follow-up work recorded in MIGRATION.md; the pinned SDK linter
+# enforces this shape fail-closed.
 
 [plugin]
 id = "bitty-terminal.git-panel"
 name = "Git Panel"
 version = "0.1.0"
-description = "Tiled Panel git branch/status/diff/log via process.spawn:git allowlisted [tools.rg] bounded 8KiB/32/64 PR-1..12"
+description = "Tiled Panel git branch/status/diff/log via process.spawn:git allowlisted [tools.git] bounded 8KiB/32/64 PR-1..12"
 license = "MIT"
 
 [compat]

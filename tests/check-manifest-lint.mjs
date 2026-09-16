@@ -1,80 +1,79 @@
 /**
- * Authoritative manifest check: runs `bitty-plugin-lint` (R-SDK-2) from
- * `bitty-plugin-sdk` against `bitty-plugin.toml`.
+ * Authoritative SDK manifest report check.
  *
- * The transitional validator wired into `just manifest` stays the always-on
- * local gate; this script adds the accepted SDK check when the CLI is
- * discoverable and skips with exit 0 otherwise so CI stays deterministic.
+ * Runs the pinned `bitty-plugin-lint` (bitty-plugin-sdk, R-SDK-2; commit pin
+ * in package.json and bun.lock) against `bitty-plugin.toml` in `--json` mode
+ * and asserts the machine-readable report says the manifest is valid.
+ * `just manifest` runs the same linter in human mode; this check covers the
+ * `--json` contract and fails closed when the pinned dependency is missing
+ * (run `just install` first).
  *
- * Discovery order:
- *
- * 1. `BITTY_PLUGIN_LINT` — path to the CLI entry (`src/cli.ts`) or a wrapper.
- * 2. `bitty-plugin-lint` on `PATH`.
+ * `BITTY_PLUGIN_LINT` overrides the CLI entry for a local SDK checkout.
  *
  * Usage:
  *
  *   bun tests/check-manifest-lint.mjs
- *   BITTY_PLUGIN_LINT=/path/to/bitty-plugin-sdk/src/cli.ts bun tests/check-manifest-lint.mjs
  */
 
 import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { delimiter, dirname, join } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(HERE, "..");
 const MANIFEST = join(REPO_ROOT, "bitty-plugin.toml");
+const PINNED_LINTER = join(
+  REPO_ROOT,
+  "node_modules",
+  "bitty-plugin-sdk",
+  "src",
+  "cli.ts",
+);
 const TIMEOUT_MS = 60_000;
 
-function findOnPath(name) {
-  const entries = (process.env.PATH ?? "").split(delimiter);
-  for (const entry of entries) {
-    if (entry === "") continue;
-    const candidate = join(entry, name);
-    if (existsSync(candidate)) return candidate;
-  }
-  return undefined;
-}
-
-function resolveLinter() {
-  const override = process.env.BITTY_PLUGIN_LINT;
-  if (override !== undefined && override !== "" && existsSync(override)) {
-    return override;
-  }
-  return findOnPath("bitty-plugin-lint");
-}
-
-function invoke(linter) {
-  if (
-    linter.endsWith(".ts") ||
-    linter.endsWith(".js") ||
-    linter.endsWith(".mjs")
-  ) {
-    return ["bun", [linter, MANIFEST]];
-  }
-  return [linter, [MANIFEST]];
-}
-
-const linter = resolveLinter();
-if (linter === undefined) {
-  console.log(
-    "skipped: bitty-plugin-lint not found; set BITTY_PLUGIN_LINT to the SDK CLI entry",
+const override = process.env.BITTY_PLUGIN_LINT;
+const linter =
+  override !== undefined && override !== "" ? override : PINNED_LINTER;
+if (!existsSync(linter)) {
+  console.error(
+    `manifest-lint: ${linter} is not installed; run 'just install'`,
   );
-  process.exit(0);
+  process.exit(1);
 }
 
-const [command, args] = invoke(linter);
-const result = spawnSync(command, args, {
+const result = spawnSync("bun", [linter, "--json", MANIFEST], {
   timeout: TIMEOUT_MS,
   encoding: "utf8",
   cwd: REPO_ROOT,
 });
-process.stdout.write(result.stdout ?? "");
-process.stderr.write(result.stderr ?? "");
 if (result.error !== undefined && result.error !== null) {
-  console.error(`bitty-plugin-lint could not run: ${result.error.message}`);
+  console.error(`manifest-lint: linter could not run: ${result.error.message}`);
   process.exit(2);
 }
-console.log(`bitty-plugin-lint: ${linter} exit=${result.status}`);
-process.exit(result.status ?? 1);
+
+let report;
+try {
+  report = JSON.parse(result.stdout ?? "");
+} catch {
+  console.error("manifest-lint: linter did not emit a JSON report");
+  process.stderr.write(result.stderr ?? "");
+  process.exit(2);
+}
+
+const diagnostics = Array.isArray(report.diagnostics) ? report.diagnostics : [];
+const errors = diagnostics.filter((entry) => entry.severity === "error");
+if (result.status !== 0 || report.valid !== true || errors.length > 0) {
+  for (const entry of diagnostics) {
+    console.error(
+      `  ${entry.severity}: ${entry.code} (${entry.path}): ${entry.message}`,
+    );
+  }
+  console.error(
+    `manifest-lint: FAIL (exit ${result.status}, valid=${report.valid}, errors=${errors.length})`,
+  );
+  process.exit(1);
+}
+console.log(
+  `ok - ${MANIFEST} valid (warnings=${diagnostics.length}) via ${linter}`,
+);

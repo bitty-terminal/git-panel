@@ -23,11 +23,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `log`, `branch`, `show`, `rev-parse`, `ls-files`), bounded listings
   (`128`/`64`/`32`), the `~/projects/**` read scope, five commands, three
   observation events, and a headless Lua behavior suite (160 assertions).
-- **Negative-fixture gate (R24):** `just test-negative` checks the
-  transitional manifest validator against `validator-negative/*.toml`,
-  requiring every known-bad fixture to be rejected and the `base.toml`
-  control to be accepted; it is wired into `just check` via `just test` and
-  fails when the fixtures are missing.
+- **Negative-fixture gate (R24):** `just test-negative` checks the manifest
+  linter against `validator-negative/*.toml`, requiring every known-bad
+  fixture to be rejected and the `base.toml` control to be accepted; it is
+  wired into `just check` via `just test` and fails when the fixtures are
+  missing.
+
+### Changed
+
+- **Manifest validation switched to the pinned SDK lint:** `just manifest`
+  now runs `bitty-plugin-lint` from `bitty-plugin-sdk` (R-SDK-2), pinned by
+  commit `c3fa9b0` in `package.json` and `bun.lock`, instead of the vendored
+  validator. `just install` (`bun install --frozen-lockfile`) is the only
+  network step and `just deps` guards every gate fail-closed; the gates use
+  the locked binaries (`bun run <bin>`) instead of `bunx <tool>@pin`, so
+  `just check`/`just test` are fully offline after install.
+- **Negative-fixture gate (R24) rewired to the SDK lint:** the gate now runs
+  the pinned `bitty-plugin-lint` on `validator-negative/*.toml`, still
+  requiring the byte-identical `base.toml` control to be accepted and every
+  negative fixture to be rejected with its expected diagnostic code
+  (fail-closed on a missing linter, fixture directory, control, or required
+  fixture). Three fixtures were replaced because the authoritative linter
+  accepts the former shapes: `bad-param` now carries a whitespace parameter,
+  and `double-colon`/`fs-bool` became `param-forbidden`
+  (`panel.provider:x`) and `fs-traversal` (`fs.read:~/../x`).
+
+### Removed
+
+- **Vendored manifest validator:** `scripts/validate-manifest.mjs` and its
+  transitional notes are removed; the pinned SDK lint is authoritative.
+  `bitty-plugin.toml`, the fixtures, and the README describe the SDK check
+  instead.
 
 ### Fixed
 
