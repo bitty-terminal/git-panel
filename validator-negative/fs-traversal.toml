@@ -1,7 +1,7 @@
 # Bitty plugin manifest.
 #
-# File name, keys, and limits are the accepted v1 contract in bitty-docs
-# `docs/specifications/plugin-platform-rfc.md` (OQ-012). The plugin manager and
+# File name, keys, and limits are the accepted v1 contract in bitty-plugins-docs
+# `specifications/plugin-platform-rfc.md` (OQ-012). The plugin manager and
 # the host parse this file independently before any plugin code runs.
 #
 # `just manifest` runs the pinned `bitty-plugin-lint` from bitty-plugin-sdk

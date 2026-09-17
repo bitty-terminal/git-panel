@@ -15,8 +15,8 @@ was scaffolded from `bitty-plugin-template`.
 
 The split changes no identity: the plugin id, capabilities, commands, and
 events are unchanged from the former bundled manifest. File name, keys, and
-limits of the manifest are the accepted v1 contract in `bitty-docs`
-`docs/specifications/plugin-platform-rfc.md` (OQ-012); the plugin manager and
+limits of the manifest are the accepted v1 contract in `bitty-plugins-docs`
+`specifications/plugin-platform-rfc.md` (OQ-012); the plugin manager and
 the host parse the manifest independently before any plugin code runs.
 
 ## Accepted versus draft: the `[tools.git]` slice
