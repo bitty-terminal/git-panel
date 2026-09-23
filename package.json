@@ -7,7 +7,7 @@
   "description": "Tiled Panel git branch/status/diff/log plugin for the Bitty terminal.",
   "license": "MIT",
   "devDependencies": {
-    "@commitlint/cli": "21.2.2",
+    "@commitlint/cli": "21.2.3",
     "@commitlint/config-conventional": "21.2.2",
     "bitty-plugin-sdk": "github:bitty-terminal/bitty-plugin-sdk#c3fa9b0574c684eebb38b01dddfdf504d183cc20",
     "lefthook": "2.1.12",
