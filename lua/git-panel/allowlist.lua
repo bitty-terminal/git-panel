@@ -37,11 +37,11 @@ M.MAX_TOTAL_BYTES = 8192
 
 -- Read-only flags the plugin actually uses: every `-`-leading string passed
 -- to `spawn_git` (`status --porcelain`, `branch -a`, `log --oneline -n 10`,
--- `diff --stat`) plus the read-only shapes the spec covers for the remaining
--- verbs (`rev-parse --abbrev-ref`, `ls-files --others`). Everything else
--- starting with `-` fails closed, which blocks read-to-write escapes such as
--- `--output`, `--index-file`, `--work-tree`, `--git-dir`, `-o`,
--- `--ext-diff`, and `--textconv`.
+-- `diff --stat`, `rev-parse --show-toplevel`) plus the read-only shapes the
+-- spec covers for the remaining verbs (`rev-parse --abbrev-ref`,
+-- `ls-files --others`). Everything else starting with `-` fails closed,
+-- which blocks read-to-write escapes such as `--output`, `--index-file`,
+-- `--work-tree`, `--git-dir`, `-o`, `--ext-diff`, and `--textconv`.
 M.ALLOWED_FLAGS = {
   "--porcelain",
   "--stat",
@@ -50,6 +50,7 @@ M.ALLOWED_FLAGS = {
   "-a",
   "--others",
   "--abbrev-ref",
+  "--show-toplevel",
 }
 
 local ALLOWED_FLAG_SET = {}

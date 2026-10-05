@@ -19,8 +19,13 @@
 -- executes, out-of-scope paths are dropped, and a missing host spawn surface
 -- reports `E_SPAWN_UNAVAILABLE` (the real bridge does not expose
 -- `bitty.process` yet; see the README "Known gaps"). Observation event
--- handlers refresh only the cached snapshot-derived state and never spawn,
--- keeping the last-known-good value when the snapshot is unavailable.
+-- handlers refresh only the cached snapshot-derived state and never spawn.
+-- The cache binds the focused terminal identity (`terminal_id`,
+-- `runtime_id`, `generation` from the semantic snapshot): an identity change
+-- or a successful snapshot with missing cwd/title clears the stale value
+-- instead of retaining another pane's root, and a focus change to a
+-- different terminal pre-invalidates before the refresh so an unavailable
+-- snapshot yields unavailable results rather than stale roots.
 
 local allowlist = require("git-panel.allowlist")
 local scope = require("git-panel.scope")
@@ -34,6 +39,10 @@ M.EVENTS = { "terminal.cwd-changed", "terminal.title-changed", "focus.changed" }
 local cache = {
   cwd = nil,
   title = nil,
+  terminal_id = nil,
+  runtime_id = nil,
+  generation = nil,
+  repo_root = nil,
 }
 
 local function fail(code, message)
@@ -55,12 +64,18 @@ end
 
 -- Refresh the cached snapshot-derived state. Called directly by commands
 -- (a denied snapshot propagates fail-closed) and behind `pcall` by event
--- handlers (last-known-good survives a denied or slow snapshot).
+-- handlers (an unavailable snapshot keeps the pre-invalidated unavailable
+-- state, never a stale pane's root).
 --
 -- The cwd comes from semantic-zone metadata newest-first (Plugin API v1
 -- Lua Surface RFC: the snapshot carries no top-level `cwd`; zones without
 -- shell integration simply contribute none), mirroring the statusline
 -- package. The title is the snapshot `title`.
+--
+-- PLUG-APP-004: the cache binds the focused terminal identity
+-- (`terminal_id`, `runtime_id`, `generation`). A successful snapshot always
+-- overwrites (missing cwd/title clears to nil); an identity change clears
+-- the derived repo root so the next status resolves against the new pane.
 local function snapshot_cwd(snap)
   local zones = snap.zones
   if type(zones) ~= "table" then
@@ -78,20 +93,81 @@ local function snapshot_cwd(snap)
   return nil
 end
 
+local function snapshot_identity(snap)
+  local terminal_id = snap.terminal_id
+  local runtime_id = snap.runtime_id
+  local generation = snap.generation
+  if type(terminal_id) ~= "number" or type(runtime_id) ~= "number" or type(generation) ~= "number" then
+    return nil, nil, nil
+  end
+  return terminal_id, runtime_id, generation
+end
+
+local function invalidate_cache()
+  cache.cwd = nil
+  cache.title = nil
+  cache.terminal_id = nil
+  cache.runtime_id = nil
+  cache.generation = nil
+  cache.repo_root = nil
+end
+
 local function refresh_cache()
   local snap = snapshot()
   local cwd = snapshot_cwd(snap)
-  if cwd ~= nil then
-    cache.cwd = cwd
-  end
+  local terminal_id, runtime_id, generation = snapshot_identity(snap)
+  local title = nil
   if type(snap.title) == "string" then
-    cache.title = snap.title
+    title = snap.title
   end
+  if terminal_id ~= cache.terminal_id or runtime_id ~= cache.runtime_id or generation ~= cache.generation then
+    cache.repo_root = nil
+  end
+  if cwd ~= cache.cwd then
+    cache.repo_root = nil
+  end
+  cache.cwd = cwd
+  cache.title = title
+  cache.terminal_id = terminal_id
+  cache.runtime_id = runtime_id
+  cache.generation = generation
   return cache.cwd
 end
 
 function M.cached_cwd()
   return cache.cwd
+end
+
+function M.cached_title()
+  return cache.title
+end
+
+function M.cached_identity()
+  return cache.terminal_id, cache.runtime_id, cache.generation
+end
+
+function M.cached_repo_root()
+  return cache.repo_root
+end
+
+-- Pre-invalidate on observation events whose payload names a different
+-- terminal/runtime than the cache, so a slow or denied re-snapshot cannot
+-- serve the previous pane's root. Handlers still never spawn.
+local function note_observation_event(event)
+  if type(event) ~= "table" or type(event.payload) ~= "table" then
+    return
+  end
+  local payload = event.payload
+  local terminal_id = payload.terminal_id
+  local runtime_id = payload.runtime_id
+  if type(terminal_id) == "number" and terminal_id ~= cache.terminal_id then
+    invalidate_cache()
+    return
+  end
+  if type(runtime_id) == "number" and runtime_id ~= cache.runtime_id then
+    invalidate_cache()
+    return
+  end
 end
 
 -- Spawn `args` through the host-provided Layer 2 surface only: the
@@ -166,42 +242,124 @@ local PORCELAIN_STATUS = {
 }
 
 -- Unwrap git C-style quote-wrapping (`"my file.txt"`, octal escapes such
--- as `"caf\303\251.txt"`). Unquoted paths pass through untouched; a
--- malformed wrapping yields `nil` (fail-closed downstream).
+-- as `"caf\303\251.txt"`) in a single left-to-right pass. Unquoted paths
+-- pass through untouched; a malformed wrapping yields `nil` (fail-closed
+-- downstream).
+--
+-- PLUG-APP-006: the previous two-pass decoder (`gsub` octal, then `gsub`
+-- single-char) mis-decoded a literal backslash before octal digits
+-- (`"a\\303b"` decoded the second backslash plus `303` as octal instead of
+-- a literal backslash plus `303`). The single pass consumes `\\` as an
+-- escaped backslash before testing for octal, preserving supported bytes.
 local function unquote_git_path(path)
   if path == nil then
     return nil
   end
-  if #path < 2 or string.sub(path, 1, 1) ~= '"' or string.sub(path, -1) ~= '"' then
+  local first = string.sub(path, 1, 1)
+  local last = string.sub(path, -1)
+  if first ~= '"' and last ~= '"' then
     return path
   end
+  if #path < 2 or first ~= '"' or last ~= '"' then
+    return nil
+  end
   local inner = string.sub(path, 2, -2)
-  inner = string.gsub(inner, "\\(%d%d%d)", function(octal)
-    local byte = tonumber(octal, 8)
-    if byte == nil or byte > 255 then
-      return "\\" .. octal
+  local out = {}
+  local index = 1
+  while index <= #inner do
+    local char = string.sub(inner, index, index)
+    if char ~= "\\" then
+      out[#out + 1] = char
+      index = index + 1
+    else
+      if index == #inner then
+        return nil
+      end
+      local o1 = string.sub(inner, index + 1, index + 1)
+      local o2 = string.sub(inner, index + 2, index + 2)
+      local o3 = string.sub(inner, index + 3, index + 3)
+      local is_octal = o1 >= "0"
+        and o1 <= "7"
+        and o2 >= "0"
+        and o2 <= "7"
+        and o3 >= "0"
+        and o3 <= "7"
+      if is_octal then
+        local byte = tonumber(o1 .. o2 .. o3, 8)
+        if byte == nil or byte > 255 then
+          return nil
+        end
+        out[#out + 1] = string.char(byte)
+        index = index + 4
+      else
+        local escaped = string.sub(inner, index + 1, index + 1)
+        if escaped == "a" then
+          out[#out + 1] = "\a"
+        elseif escaped == "b" then
+          out[#out + 1] = "\b"
+        elseif escaped == "f" then
+          out[#out + 1] = "\f"
+        elseif escaped == "n" then
+          out[#out + 1] = "\n"
+        elseif escaped == "r" then
+          out[#out + 1] = "\r"
+        elseif escaped == "t" then
+          out[#out + 1] = "\t"
+        elseif escaped == "v" then
+          out[#out + 1] = "\v"
+        else
+          out[#out + 1] = escaped
+        end
+        index = index + 2
+      end
     end
-    return string.char(byte)
-  end)
-  inner = string.gsub(inner, "\\(.)", function(escaped)
-    if escaped == "a" then
-      return "\a"
-    elseif escaped == "b" then
-      return "\b"
-    elseif escaped == "f" then
-      return "\f"
-    elseif escaped == "n" then
-      return "\n"
-    elseif escaped == "r" then
-      return "\r"
-    elseif escaped == "t" then
-      return "\t"
-    elseif escaped == "v" then
-      return "\v"
+  end
+  return table.concat(out)
+end
+
+-- Quote-aware rename separator: the last ` -> ` outside C-quote wrapping.
+-- A ` -> ` inside quotes belongs to the filename and never splits. Escaped
+-- quotes (`\"`) and escaped backslashes (`\\`) never toggle the quote state.
+local function find_rename_separator(rest)
+  local last_sep = nil
+  local in_quote = false
+  local index = 1
+  while index <= #rest do
+    local char = string.sub(rest, index, index)
+    if in_quote then
+      if char == "\\" then
+        index = index + 2
+      elseif char == '"' then
+        in_quote = false
+        index = index + 1
+      else
+        index = index + 1
+      end
+    else
+      if char == '"' then
+        in_quote = true
+        index = index + 1
+      elseif char == " " and string.sub(rest, index, index + 3) == " -> " then
+        last_sep = index
+        index = index + 4
+      else
+        index = index + 1
+      end
     end
-    return escaped
-  end)
-  return inner
+  end
+  return last_sep
+end
+
+local function rename_post_image(rest)
+  local sep = find_rename_separator(rest)
+  if sep == nil then
+    return nil
+  end
+  local new_part = string.sub(rest, sep + 4)
+  if new_part == "" then
+    return nil
+  end
+  return new_part
 end
 
 -- Sane XY two-column semantics for porcelain v1: either column may carry
@@ -221,25 +379,31 @@ local function parse_porcelain(output)
   local paths = {}
   for line in string.gmatch(output or "", "[^\n]+") do
     -- Porcelain v1 is `XY SP path`: either column may carry the change
-    -- (` M` is a worktree modification, `A ` a staged addition).
-    local x = string.sub(line, 1, 1)
-    local y = string.sub(line, 2, 2)
-    local rest = string.match(line, "^..%s+(.-)%s*$")
-    local status = porcelain_status(x, y)
-    if rest ~= nil and status ~= nil then
-      local path = rest
-      if status == "renamed" or status == "copied" then
-        -- R18: renames/copies carry `old -> new`; the panel tracks the
-        -- post-image. The first capture is greedy so a quoted ` -> `
-        -- inside a name still splits at the separator.
-        local _, new = string.match(rest, "^(.*) %-> (.-)$")
-        if new ~= nil then
-          path = new
+    -- (` M` is a worktree modification, `A ` a staged addition). The path
+    -- starts at byte 4 and is preserved verbatim (including trailing
+    -- spaces); shorter lines or a missing separator space are invalid.
+    if #line >= 4 and string.sub(line, 3, 3) == " " then
+      local x = string.sub(line, 1, 1)
+      local y = string.sub(line, 2, 2)
+      local rest = string.sub(line, 4)
+      local status = porcelain_status(x, y)
+      if rest ~= "" and status ~= nil then
+        local path = rest
+        if status == "renamed" or status == "copied" then
+          -- R18: renames/copies carry `old -> new`; the panel tracks the
+          -- post-image. The split is quote-aware: only a ` -> ` outside
+          -- C-quote wrapping separates, so a quoted ` -> ` inside a name
+          -- never splits. Unquoted ambiguity keeps the greedy last-separator
+          -- behavior.
+          local new = rename_post_image(rest)
+          if new ~= nil then
+            path = new
+          end
         end
-      end
-      path = unquote_git_path(path)
-      if path ~= nil and path ~= "" then
-        paths[#paths + 1] = { path = path, status = status }
+        local decoded = unquote_git_path(path)
+        if decoded ~= nil and decoded ~= "" then
+          paths[#paths + 1] = { path = decoded, status = status }
+        end
       end
     end
   end
@@ -272,10 +436,54 @@ local function status_entries_from_output(output, root)
   return entries
 end
 
+-- PLUG-APP-005: the repository root is distinct from the pane cwd. The
+-- pane cwd comes from the semantic snapshot and selects the spawn cwd; the
+-- repository root comes from the accepted read-only `[tools.git]` contract
+-- (`git rev-parse --show-toplevel`, allowlisted) and joins root-relative
+-- porcelain records. A pane in a nested directory must not join against
+-- the nested cwd. The bridge prerequisite is explicit: without
+-- `bitty.process.spawn` both resolutions fail with `E_SPAWN_UNAVAILABLE`
+-- (see README Known gaps); without a resolvable root, relatives drop
+-- fail-closed while explicit-root headless use keeps working.
+local function repo_root_from_output(output)
+  if type(output) ~= "string" then
+    return nil
+  end
+  local first = string.match(output, "^([^\r\n]*)")
+  if first == nil or first == "" then
+    return nil
+  end
+  if not scope.is_valid_path(first) then
+    return nil
+  end
+  for segment in string.gmatch(first, "[^/]+") do
+    if segment == ".." then
+      return nil
+    end
+  end
+  return first
+end
+
+local function resolve_repo_root()
+  if cache.repo_root ~= nil then
+    return cache.repo_root
+  end
+  if cache.cwd == nil then
+    return nil
+  end
+  local output = spawn_git({ "rev-parse", "--show-toplevel" })
+  local root = repo_root_from_output(output)
+  if root ~= nil then
+    cache.repo_root = root
+  end
+  return root
+end
+
 local function status_entries()
   refresh_cache()
+  local root = resolve_repo_root()
   local output = spawn_git({ "status", "--porcelain" })
-  return status_entries_from_output(output, cache.cwd)
+  return status_entries_from_output(output, root)
 end
 
 local function branch_list_from_output(output)
@@ -325,11 +533,16 @@ bitty.commands.register({
   run = function(_args)
     -- M-GP-06: exactly one snapshot per open; the shared cache serves both
     -- the branch and the status derivations below (no per-listing refresh).
+    -- The status derivation joins against the resolved repository root,
+    -- not the pane cwd (PLUG-APP-005); the summary `cwd` still reports the
+    -- pane cwd.
     refresh_cache()
+    local root = resolve_repo_root()
     local branches = branch_list_from_output(spawn_git({ "branch", "-a" }))
-    local entries = status_entries_from_output(spawn_git({ "status", "--porcelain" }), cache.cwd)
+    local entries = status_entries_from_output(spawn_git({ "status", "--porcelain" }), root)
     return {
       cwd = cache.cwd,
+      repo_root = root,
       branches = #branches,
       entries = #entries,
     }
@@ -373,17 +586,21 @@ bitty.commands.register({
 })
 
 -- Observation handlers refresh only the cached snapshot-derived state and
--- never spawn: a slow or denied snapshot cannot stall event dispatch, and
--- the last-known-good value survives.
-bitty.events.subscribe("terminal.cwd-changed", function(_event)
+-- never spawn: a slow or denied snapshot cannot stall event dispatch. A
+-- payload naming a different terminal/runtime pre-invalidates so the
+-- previous pane's root is never served as unavailable-turned-stale.
+bitty.events.subscribe("terminal.cwd-changed", function(event)
+  note_observation_event(event)
   pcall(refresh_cache)
 end)
 
-bitty.events.subscribe("terminal.title-changed", function(_event)
+bitty.events.subscribe("terminal.title-changed", function(event)
+  note_observation_event(event)
   pcall(refresh_cache)
 end)
 
-bitty.events.subscribe("focus.changed", function(_event)
+bitty.events.subscribe("focus.changed", function(event)
+  note_observation_event(event)
   pcall(refresh_cache)
 end)
 
@@ -392,5 +609,8 @@ M.branch_list = branch_list
 M.commit_list = commit_list
 M.diff_lines = diff_lines
 M.parse_porcelain = parse_porcelain
+M.resolve_repo_root = resolve_repo_root
+M.repo_root_from_output = repo_root_from_output
+M.invalidate_cache = invalidate_cache
 
 return M

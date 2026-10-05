@@ -65,6 +65,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Cached roots bind focused terminal identity (#25, PLUG-APP-004):** the
+  snapshot cache now stores `terminal_id`, `runtime_id`, and `generation`
+  alongside cwd/title; a successful snapshot always overwrites (missing
+  cwd/title clears instead of retaining another pane's root), an identity
+  or cwd change clears the derived repo root, and focus/observation payloads
+  naming a different terminal pre-invalidate so unavailable snapshots yield
+  unavailable results rather than stale roots. Explicit-root headless use
+  keeps working.
+- **Repository root separated from pane cwd (#26, PLUG-APP-005):** status
+  now resolves `git rev-parse --show-toplevel` (newly allowlisted
+  read-only flag) in the pane cwd and joins root-relative porcelain records
+  against that root; spawns still run in the pane cwd. An unresolvable root
+  drops relatives fail-closed. The host spawn bridge remains the explicit
+  prerequisite (`E_SPAWN_UNAVAILABLE` until it lands).
+- **Porcelain path bytes preserved (#27, PLUG-APP-006):** the v1 parser is
+  now single-pass quote-aware: only a `->` outside C-quote wrapping splits
+  renames/copies, `\\` decodes before octal so a literal backslash before
+  digits is preserved, UTF-8 octal bytes are kept, trailing spaces are
+  preserved, and malformed wrappings drop. No new spawn surface; pure
+  in-memory fixtures cover the cases.
 - **Nil-hole spawn allowlist bypass:** `is_allowed_args` now enforces a dense
   string sequence (all of `1..n` present, every member a string), so a sparse
   table such as `{ "status", nil, "--output" }` cannot hide a denied trailing
