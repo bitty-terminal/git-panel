@@ -43,6 +43,8 @@ function MockHost.new(options)
   self.snapshot_value = options.snapshot
   self.spawn_outputs = options.spawn_outputs or {}
   self.spawn_calls = {}
+  self.spawn_cwds = {}
+  self.spawn_opts = {}
   self.commands = {}
   self.subscriptions = {}
   self.handle_counter = 0
@@ -119,12 +121,24 @@ function MockHost:build_bitty()
       end,
     },
     process = {
-      spawn = function(args)
+-- In-memory adapter: records the spawn cwd separately so fixtures can
+-- distinguish the pane cwd (spawn `opts.cwd`) from the repository root
+-- (rev-parse output). `spawn_calls` stays the arg vectors for backward
+-- compatibility; `spawn_cwds` parallels it with the observed cwd.
+      spawn = function(args, opts)
         self:assert_capability("bitty.process.spawn", "process.spawn:git")
         if not allowlist.is_allowed_args(args) then
           fail("runtime", "E_SPAWN_DENIED", "git invocation is outside the [tools.git] allowlist")
         end
         self.spawn_calls[#self.spawn_calls + 1] = args
+        local cwd = nil
+        if type(opts) == "table" and type(opts.cwd) == "string" then
+          cwd = opts.cwd
+        end
+        self.spawn_cwds = self.spawn_cwds or {}
+        self.spawn_cwds[#self.spawn_cwds + 1] = cwd
+        self.spawn_opts = self.spawn_opts or {}
+        self.spawn_opts[#self.spawn_opts + 1] = opts
         local key = table.concat(args, "\0")
         local output = self.spawn_outputs[key]
         if output == nil then

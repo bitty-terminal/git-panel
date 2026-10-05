@@ -23,6 +23,7 @@ function M.run(context)
   tap.ok(allowlist.is_allowed_args({ "branch", "-a" }), "branch -a")
   tap.ok(allowlist.is_allowed_args({ "show", "abc1234" }), "show hash")
   tap.ok(allowlist.is_allowed_args({ "rev-parse", "--abbrev-ref", "HEAD" }), "rev-parse HEAD")
+  tap.ok(allowlist.is_allowed_args({ "rev-parse", "--show-toplevel" }), "rev-parse toplevel")
   tap.ok(allowlist.is_allowed_args({ "ls-files", "--others" }), "ls-files --others")
 
   tap.ok(not allowlist.is_allowed_args({ "push" }), "denies push")

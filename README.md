@@ -73,7 +73,21 @@ The plugin keeps the bundled git-panel behavior and bounds (OQ-053 split,
   generation;
 - observation event handlers refresh only the cached snapshot-derived state
   and never spawn; a denied `terminal.semantic-read` propagates instead of
-  serving empty data.
+  serving empty data;
+- cached roots bind the focused terminal identity (`terminal_id`,
+  `runtime_id`, `generation`): an identity change or a successful snapshot
+  with missing cwd/title clears the stale value, and a focus change naming
+  a different terminal pre-invalidates so unavailable snapshots yield
+  unavailable results rather than another pane's root;
+- repository root stays separate from the pane cwd: status resolves
+  `git rev-parse --show-toplevel` (allowlisted read-only) in the pane cwd
+  and joins root-relative porcelain records against that root, so a nested
+  pane cwd never mis-joins; an unresolvable root drops relatives
+  fail-closed while explicit-root headless use keeps working;
+- porcelain v1 parses quote-aware in a single pass: only a `->` outside
+  C-quote wrapping splits renames/copies, `\\` decodes before octal so a
+  literal backslash before digits is preserved, UTF-8 octal bytes are kept,
+  trailing spaces are preserved, and malformed wrappings drop.
 
 ## Capability identity with the bundled realization
 
@@ -88,8 +102,9 @@ bundled Rust realization already declared exactly this set.
   (`crates/bitty-lua/src/host.rs`) implements commands, events, settings,
   store, terminal snapshots, notifications, and timers, but not
   `bitty.process.spawn`. Spawn-backed commands fail closed with
-  `E_SPAWN_UNAVAILABLE` until that surface lands. Tracked as a follow-up
-  task in `bitty`.
+  `E_SPAWN_UNAVAILABLE` until that surface lands, including the
+  `rev-parse --show-toplevel` repository-root resolution. Tracked as a
+  follow-up task in `bitty`.
 - **Host `[tools.*]` manifest-table enforcement.** The accepted `[tools.git]`
   declaration is enforced by the pinned SDK linter (`bitty-plugin-lint`,
   R-SDK-2), but the `bitty` install-path TOML subset reader accepts no
