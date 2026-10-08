@@ -344,6 +344,45 @@ local function run(context)
     tap.equal(summary.branches, 2, "open shares snapshot with branches")
     tap.equal(summary.entries, 1, "open shares snapshot with status")
   end
+
+  -- #37: heavy verbs first on a fresh generation with an empty store.
+  -- Run C order (branch first) and Run A order (open first) against empty
+  -- spawn outputs (non-repo scratch cwd, trivially small parsing). The
+  -- plugin-side workload is bounded (allowlisted git, 8 KiB cap,
+  -- MAX_ENTRIES/MAX_BRANCHES); a headless InstructionBudgetExceeded here
+  -- would implicate the host budget, not a plugin loop. Mock proves the
+  -- plugin completes and later verbs still serve (no sticky failure).
+  do
+    local host = full_host({ spawn_outputs = {} })
+    activate(host)
+    local branches = host:run("branch", {})
+    tap.equal(#branches, 0, "branch-first on empty store completes empty")
+    tap.equal(#host.spawn_calls, 1, "branch-first issues one spawn")
+    local summary = host:run("open", {})
+    tap.equal(summary.branches, 0, "open after branch reports zero branches")
+    tap.equal(summary.entries, 0, "open after branch reports zero entries")
+    tap.equal(summary.cwd, "~/projects/foo", "open after branch reports cached cwd")
+    local commits = host:run("log", {})
+    tap.equal(#commits, 0, "log after heavy verbs still serves")
+    local entries = host:run("status", {})
+    tap.equal(#entries, 0, "status after heavy verbs still serves")
+    local lines = host:run("diff", {})
+    tap.equal(#lines, 0, "diff after heavy verbs still serves")
+  end
+
+  -- #37 Run A order: open first on a fresh generation with an empty store.
+  do
+    local host = full_host({ spawn_outputs = {} })
+    activate(host)
+    local summary = host:run("open", {})
+    tap.equal(summary.branches, 0, "open-first on empty store completes empty")
+    tap.equal(summary.entries, 0, "open-first reports zero entries")
+    tap.equal(#host.spawn_calls, 2, "open-first issues two spawns")
+    local branches = host:run("branch", {})
+    tap.equal(#branches, 0, "branch after open still serves")
+    local entries = host:run("status", {})
+    tap.equal(#entries, 0, "status after open still serves")
+  end
 end
 
 return { run = run }
