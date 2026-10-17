@@ -23,8 +23,9 @@ description = "Tiled Panel git branch/status/diff/log via process.spawn:git allo
 license = "MIT"
 
 [compat]
-# Unchanged from the former bundled `bitty-terminal.git-panel` realization.
-bitty = ">=0.1,<1.0"
+# The 0.0.24 host is the verified compatibility floor; the <0.1 ceiling
+# remains restrictive because 0.x minor releases may break compatibility.
+bitty = ">=0.0.24,<0.1"
 plugin-api = "^1.0"
 
 [capabilities]
