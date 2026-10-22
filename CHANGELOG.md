@@ -39,6 +39,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Minimum-only host compatibility (bitty#2462):** the manifest
+  `[compat].bitty` range is now `>=0.0.24` with no upper bound, so newer hosts
+  (including 0.1+) are no longer refused by a manifest ceiling; `plugin-api`
+  stays `^1.0`. The README prerequisites and `E_INCOMPATIBLE` guidance follow
+  the same minimum-only contract.
 - Describe the plugin by user-facing behavior in the manifest: `Read-only
 branch, status, diff, and log panel for the Git repository behind the
 focused pane`, replacing the internal spawn/bound/PR-token shorthand. The
