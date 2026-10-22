@@ -23,10 +23,10 @@ description = "Read-only branch, status, diff, and log panel for the Git reposit
 license = "MIT"
 
 [compat]
-# The declared compatibility floor for the 0.0.24 release train is >=0.0.24,<0.1.
-# The <0.1 ceiling remains restrictive because 0.x minor releases may break
-# compatibility.
-bitty = ">=0.0.24,<0.1"
+# Minimum-only host compatibility (bitty#2462): the floor is the 0.0.24 release
+# train this plugin is verified against, and no upper bound is declared, so
+# newer hosts (0.0.x and 0.1+) install without a manifest edit.
+bitty = ">=0.0.24"
 plugin-api = "^1.0"
 
 [capabilities]

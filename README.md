@@ -33,8 +33,8 @@ terminal.
 
 Prerequisites:
 
-- Bitty `>=0.0.24,<0.1` with Plugin API `^1.0` (the manifest `[compat]`
-  range).
+- Bitty `>=0.0.24` with Plugin API `^1.0` (the manifest `[compat]` minimum;
+  no upper bound is declared).
 - `git >= 2.30` on `PATH`; the manifest declares
   `[tools.git] required = true`. `bitty plugin doctor` reports tool presence
   and version.
@@ -114,7 +114,7 @@ replaces a shipped entry, and the plugin never binds a chord on its own.
 
 | Code                     | Class                | Cause                                                                                                             | Remedy                                                                                                                                    |
 | ------------------------ | -------------------- | ----------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| `E_INCOMPATIBLE`         | `validation`         | The running host is outside `>=0.0.24,<0.1`, or Plugin API is not `^1.0`.                                         | Upgrade Bitty or install a Git Panel release whose `[compat]` range covers your host.                                                     |
+| `E_INCOMPATIBLE`         | `validation`         | The running host does not satisfy `>=0.0.24`, or Plugin API is not `^1.0`.                                        | Upgrade Bitty or install a Git Panel release whose `[compat]` minimum covers your host.                                                   |
 | `E_CAPABILITY_DENIED`    | `runtime`            | The `process.spawn:git`, `terminal.semantic-read`, or panel grant is missing, expired, or revoked.                | Re-run `bitty plugin install <path>` and approve the current grant set; `bitty plugin list` shows what is recorded.                       |
 | `E_SPAWN_DENIED`         | `runtime` / `budget` | The argv shape is invalid, the subcommand is outside the `[tools.git]` allowlist, or a spawn budget was exceeded. | Only the seven read-only verbs are admitted. The plugin issues only those; report the message if it appears for a normal command.         |
 | `E_SPAWN_FAILED`         | `runtime`            | `git` exited non-zero, the spawn or host failed, or tool confinement refused the spawn.                           | Check that `git` works in the pane's directory. A confinement refusal is fail-closed and is not retried; see the note below.              |
