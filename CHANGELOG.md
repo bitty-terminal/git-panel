@@ -39,6 +39,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Describe the plugin by user-facing behavior in the manifest: `Read-only
+branch, status, diff, and log panel for the Git repository behind the
+focused pane`, replacing the internal spawn/bound/PR-token shorthand. The
+  negative fixture mirrors the same description.
 - **Manifest validation switched to the pinned SDK lint:** `just manifest`
   now runs `bitty-plugin-lint` from `bitty-plugin-sdk` (R-SDK-2), pinned by
   commit `c3fa9b0` in `package.json` and `bun.lock`, instead of the vendored

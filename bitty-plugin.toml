@@ -19,7 +19,7 @@
 id = "bitty-terminal.git-panel"
 name = "Git Panel"
 version = "0.1.0"
-description = "Tiled Panel git branch/status/diff/log via process.spawn:git allowlisted [tools.git] bounded 8KiB/32/64 PR-1..12"
+description = "Read-only branch, status, diff, and log panel for the Git repository behind the focused pane"
 license = "MIT"
 
 [compat]
