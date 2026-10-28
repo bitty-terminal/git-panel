@@ -74,6 +74,10 @@ focused pane`, replacing the internal spawn/bound/PR-token shorthand. The
 
 ### Fixed
 
+- **Worktree-safe Markdown gate (#119):** `.markdownlint-cli2.jsonc` ignores
+  `**/node_modules` and `.worktrees`, so `just check` run in a linked worktree
+  no longer lints vendored dependency trees under
+  `.worktrees/<task>/node_modules` (MD012).
 - **Cached roots bind focused terminal identity (#25, PLUG-APP-004):** the
   snapshot cache now stores `terminal_id`, `runtime_id`, and `generation`
   alongside cwd/title; a successful snapshot always overwrites (missing
