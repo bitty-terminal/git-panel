@@ -41,7 +41,8 @@ local function full_host(overrides)
   overrides.commands = overrides.commands or COMMANDS
   overrides.events = overrides.events or EVENTS
   overrides.snapshot = overrides.snapshot
-    or { title = "git-panel", zones = { { metadata = { cwd = "~/projects/foo" } } } }
+    or { title = "git-panel", zones = { { metadata = { cwd = "/srv/git/repo" } } } }
+  overrides.git_dir_policy = overrides.git_dir_policy or "confined"
   return MockHost.new(overrides)
 end
 
@@ -90,8 +91,10 @@ local function run(context)
     tap.equal(#entries, 3, "three in-scope entries")
     tap.equal(entries[1].path, "~/projects/bar.rs", "entries sorted")
     tap.equal(#host.spawn_calls, 2, "root plus status spawns issued")
-    tap.equal(host.spawn_calls[1][1], "rev-parse", "first spawn resolves root")
-    tap.equal(host.spawn_calls[2][1], "status", "second spawn is status")
+    tap.equal(host.spawn_calls[1][1], "-C", "first spawn selects the pane directory")
+    tap.equal(host.spawn_calls[1][2], "/srv/git/repo", "pane directory is a distinct argv element")
+    tap.equal(host.spawn_calls[1][3], "rev-parse", "first spawn resolves root")
+    tap.equal(host.spawn_calls[2][3], "status", "second spawn is status")
   end
 
   -- Out-of-scope spawn output never reaches the panel (fail-closed filter).
@@ -112,17 +115,17 @@ local function run(context)
   do
     local host = full_host({
       spawn_outputs = {
-        ["rev-parse\0--show-toplevel"] = "~/projects/foo\n",
+        ["rev-parse\0--show-toplevel"] = "/srv/git/repo\n",
         ["status\0--porcelain"] = " M src/lib.rs\n?? README.md\nR  old.lua -> new.lua\n",
       },
     })
     activate(host)
     local entries = host:run("status", {})
     tap.equal(#entries, 3, "real porcelain all kept")
-    tap.equal(entries[1].path, "~/projects/foo/README.md", "relative resolved and sorted first")
-    tap.equal(entries[2].path, "~/projects/foo/new.lua", "rename tracks post-image")
+    tap.equal(entries[1].path, "/srv/git/repo/README.md", "relative resolved and sorted first")
+    tap.equal(entries[2].path, "/srv/git/repo/new.lua", "rename tracks post-image")
     tap.equal(entries[2].status, "renamed", "rename status carried")
-    tap.equal(entries[3].path, "~/projects/foo/src/lib.rs", "relative resolved")
+    tap.equal(entries[3].path, "/srv/git/repo/src/lib.rs", "relative resolved")
   end
 
   -- H-GP-01: repositories rooted anywhere resolve; traversal still drops.
@@ -144,15 +147,15 @@ local function run(context)
   do
     local host = full_host({
       spawn_outputs = {
-        ["rev-parse\0--show-toplevel"] = "~/projects/foo\n",
+        ["rev-parse\0--show-toplevel"] = "/srv/git/repo\n",
         ["status\0--porcelain"] = ' M "my file.txt"\nR  "old name.lua" -> "new name.lua"\n',
       },
     })
     activate(host)
     local entries = host:run("status", {})
     tap.equal(#entries, 2, "quoted lines kept")
-    tap.equal(entries[1].path, "~/projects/foo/my file.txt", "quoted spaces unwrapped")
-    tap.equal(entries[2].path, "~/projects/foo/new name.lua", "quoted rename post-image")
+    tap.equal(entries[1].path, "/srv/git/repo/my file.txt", "quoted spaces unwrapped")
+    tap.equal(entries[2].path, "/srv/git/repo/new name.lua", "quoted rename post-image")
   end
 
   -- R18: XY two-column semantics (unmerged pairs report conflicted).
@@ -182,8 +185,7 @@ local function run(context)
     tap.equal(type(err) == "table" and err.code or nil, "E_CAPABILITY_DENIED", "denied capability code")
   end
 
-  -- Missing host spawn surface fails closed with a diagnostic (the real
-  -- bridge does not expose bitty.process yet; see README Known gaps).
+  -- Missing host spawn surface fails closed with a diagnostic.
   do
     local host = full_host()
     host.bitty.process = nil
@@ -205,6 +207,125 @@ local function run(context)
     end)
     tap.ok(not ok, "denied spawn grant fails the command")
     tap.equal(type(err) == "table" and err.code or nil, "E_CAPABILITY_DENIED", "denied spawn code")
+  end
+
+  -- Spawn-option parity (CTX-1345): Core's Lua bridge accepts argv only and
+  -- rejects a plugin-supplied `cwd` with E_DEF_INVALID. The mock mirrors the
+  -- exact diagnostic so the repo gate catches a regression instead of a real
+  -- host being the first place it fails.
+  do
+    local host = full_host()
+    activate(host)
+    local ok, err = pcall(function()
+      return host.bitty.process.spawn(
+        { "-C", "/srv/git/repo", "status", "--porcelain" },
+        { cwd = "/srv/git/repo" }
+      )
+    end)
+    tap.ok(not ok, "spawn cwd option is rejected")
+    tap.equal(type(err) == "table" and err.code or nil, "E_DEF_INVALID", "spawn cwd code")
+    tap.equal(
+      type(err) == "table" and err.message or nil,
+      "process.spawn cwd is not supported: a plugin-controlled working directory cannot be confined to the plugin filesystem grant",
+      "spawn cwd message mirrors Core"
+    )
+    local unknown_ok, unknown_err = pcall(function()
+      return host.bitty.process.spawn({ "-C", "/srv/git/repo", "status" }, { env = {} })
+    end)
+    tap.ok(not unknown_ok, "unknown spawn option is rejected")
+    tap.equal(
+      type(unknown_err) == "table" and unknown_err.code or nil,
+      "E_DEF_INVALID",
+      "unknown spawn option code"
+    )
+  end
+
+  -- P1 regression: all five commands dispatch through the plugin runtime.
+  -- Each spawn selects the pane directory on argv (`git -C <dir>`) and never
+  -- uses the unsupported `cwd` option or a git run in the host cwd.
+  do
+    local host = full_host({
+      spawn_outputs = {
+        ["rev-parse\0--show-toplevel"] = "/srv/git/repo\n",
+        ["status\0--porcelain"] = " M src/lib.rs\n",
+        ["diff\0--stat"] = " src/lib.rs | 1 +\n",
+        ["log\0--oneline\0-n\0" .. "10"] = "abc1234 initial commit\n",
+        ["branch\0-a"] = "* main\n",
+      },
+    })
+    activate(host)
+    for _, command in ipairs({ "open", "status", "diff", "log", "branch" }) do
+      local ok, result = pcall(function()
+        return host:run(command, {})
+      end)
+      tap.ok(ok, command .. " dispatches without error")
+      if not ok then
+        local code = type(result) == "table" and result.code or nil
+        tap.ok(code ~= "E_DEF_INVALID", command .. " avoids the unsupported cwd option")
+        tap.ok(code ~= "E_SPAWN_FAILED", command .. " avoids a failed spawn")
+      else
+        tap.equal(type(result), "table", command .. " returns data")
+      end
+    end
+    tap.ok(#host.spawn_calls > 0, "commands spawned git")
+    for _, argv in ipairs(host.spawn_calls) do
+      tap.equal(argv[1], "-C", "argv selects the pane directory")
+      tap.equal(argv[2], "/srv/git/repo", "argv directory is the pane cwd")
+      tap.ok(argv[3] ~= nil, "argv carries the git verb after the directory")
+    end
+  end
+
+  -- Core-policy gap (tracked cross-repository dependency): today's
+  -- `[tools.git]` allowlist denies `-C` as a repository-escape vector and
+  -- there is no host-derived cwd, so the same argv is refused. The gate
+  -- pins that divergence explicitly instead of assuming a host behavior that
+  -- does not exist.
+  do
+    local host = full_host({ git_dir_policy = "denied" })
+    activate(host)
+    local ok, err = pcall(function()
+      return host:run("status", {})
+    end)
+    tap.ok(not ok, "current core policy refuses the pane directory")
+    tap.equal(type(err) == "table" and err.code or nil, "E_SPAWN_DENIED", "refused by [tools.git]")
+  end
+
+  -- A missing or unsafe pane directory fails closed with E_CWD_UNAVAILABLE
+  -- instead of spawning git in the host process cwd (the old exit-128 path).
+  do
+    local cases = {
+      { name = "no zones", snapshot = { title = "bad", zones = {} } },
+      {
+        name = "empty cwd",
+        snapshot = { title = "bad", zones = { { metadata = { cwd = "" } } } },
+      },
+      {
+        name = "relative cwd",
+        snapshot = { title = "bad", zones = { { metadata = { cwd = "relative/dir" } } } },
+      },
+      {
+        name = "traversal",
+        snapshot = { title = "bad", zones = { { metadata = { cwd = "/srv/git/../etc" } } } },
+      },
+      {
+        name = "control byte",
+        snapshot = { title = "bad", zones = { { metadata = { cwd = "/srv/git/repo\0" } } } },
+      },
+    }
+    for _, case in ipairs(cases) do
+      local host = full_host({ snapshot = case.snapshot })
+      activate(host)
+      local ok, err = pcall(function()
+        return host:run("status", {})
+      end)
+      tap.ok(not ok, "invalid pane cwd fails the command: " .. case.name)
+      tap.equal(
+        type(err) == "table" and err.code or nil,
+        "E_CWD_UNAVAILABLE",
+        "invalid pane cwd code: " .. case.name
+      )
+      tap.equal(#host.spawn_calls, 0, "no spawn without a pane directory: " .. case.name)
+    end
   end
 
   -- The log command serves bounded commits from allowlisted output.
@@ -242,35 +363,36 @@ local function run(context)
     local host = full_host()
     local plugin = activate(host)
     tap.equal(#host.spawn_calls, 0, "activation spawns nothing")
-    host.snapshot_value = { title = "moved", zones = { { metadata = { cwd = "~/projects/other" } } } }
+    host.snapshot_value = { title = "moved", zones = { { metadata = { cwd = "/srv/git/other" } } } }
     host:publish("terminal.cwd-changed", {})
-    tap.equal(plugin.cached_cwd(), "~/projects/other", "cwd cache refreshed")
+    tap.equal(plugin.cached_cwd(), "/srv/git/other", "cwd cache refreshed")
     tap.equal(#host.spawn_calls, 0, "event handler spawns nothing")
   end
 
-  -- H-GP-02: every spawn runs in the pane cwd (not the host root).
-  -- Status first resolves the repository root, so four spawns are
-  -- observed: rev-parse, status, branch, log.
+  -- H-GP-02 / spawn-cwd parity: every spawn selects the pane cwd on argv
+  -- (`git -C <dir>`) instead of the unsupported spawn `cwd` option. Status
+  -- first resolves the repository root, so four spawns are observed:
+  -- rev-parse, status, branch, log.
   do
     local host = full_host()
     activate(host)
-    local seen_cwds = {}
-    local seen_verbs = {}
+    local seen = {}
     host.bitty.process.spawn = function(args, opts)
-      seen_cwds[#seen_cwds + 1] = opts ~= nil and opts.cwd or nil
-      seen_verbs[#seen_verbs + 1] = args[1]
-      if args[1] == "rev-parse" then
-        return { status = 0, output = "~/projects/foo\n" }
+      seen[#seen + 1] = { args = args, opts = opts }
+      if args[3] == "rev-parse" then
+        return { status = 0, output = "/srv/git/repo\n" }
       end
       return { status = 0, output = "" }
     end
     host:run("status", {})
     host:run("branch", {})
     host:run("log", {})
-    tap.equal(#seen_cwds, 4, "four spawns observed (root plus three)")
-    tap.equal(seen_verbs[1], "rev-parse", "root resolves first")
-    for _, cwd in ipairs(seen_cwds) do
-      tap.equal(cwd, "~/projects/foo", "spawn carries pane cwd")
+    tap.equal(#seen, 4, "four spawns observed (root plus three)")
+    tap.equal(seen[1].args[3], "rev-parse", "root resolves first")
+    for _, call in ipairs(seen) do
+      tap.equal(call.args[1], "-C", "spawn selects the pane directory on argv")
+      tap.equal(call.args[2], "/srv/git/repo", "spawn directory is the pane cwd")
+      tap.equal(call.opts, nil, "spawn passes no options table")
     end
   end
 
@@ -285,8 +407,8 @@ local function run(context)
       lines[#lines + 1] = " M ~/projects/file" .. i .. ".txt"
     end
     host.bitty.process.spawn = function(args, _opts)
-      if args[1] == "rev-parse" then
-        return { status = 0, output = "~/projects/foo\n" }
+      if args[3] == "rev-parse" then
+        return { status = 0, output = "/srv/git/repo\n" }
       end
       return { status = 0, output = table.concat(lines, "\n") .. "\n" }
     end
@@ -294,8 +416,8 @@ local function run(context)
     tap.ok(plugin.last_spawn_truncated(), "oversized output sets truncation bit")
     tap.le(#entries, 128, "entries still display-bounded after truncation")
     host.bitty.process.spawn = function(args, _opts)
-      if args[1] == "rev-parse" then
-        return { status = 0, output = "~/projects/foo\n" }
+      if args[3] == "rev-parse" then
+        return { status = 0, output = "/srv/git/repo\n" }
       end
       return { status = 0, output = " M ~/projects/foo.txt\n" }
     end
@@ -328,8 +450,8 @@ local function run(context)
     local output = head .. phantom_line .. "\n"
     tap.ok(#output > bound, "fixture exceeds the 8 KiB bound")
     host.bitty.process.spawn = function(args, _opts)
-      if args[1] == "rev-parse" then
-        return { status = 0, output = "~/projects/foo\n" }
+      if args[3] == "rev-parse" then
+        return { status = 0, output = "/srv/git/repo\n" }
       end
       return { status = 0, output = output }
     end
@@ -349,7 +471,7 @@ local function run(context)
   do
     local host = full_host({
       spawn_outputs = {
-        ["rev-parse\0--show-toplevel"] = "~/projects/foo\n",
+        ["rev-parse\0--show-toplevel"] = "/srv/git/repo\n",
         ["branch\0-a"] = "* main\n  feature/foo\n",
         ["status\0--porcelain"] = " M src/lib.rs\n",
       },
@@ -363,8 +485,8 @@ local function run(context)
     end
     local summary = host:run("open", {})
     tap.equal(snapshots, 1, "open takes one snapshot")
-    tap.equal(summary.cwd, "~/projects/foo", "open reports pane cwd")
-    tap.equal(summary.repo_root, "~/projects/foo", "open reports resolved root")
+    tap.equal(summary.cwd, "/srv/git/repo", "open reports pane cwd")
+    tap.equal(summary.repo_root, "/srv/git/repo", "open reports resolved root")
     tap.equal(summary.branches, 2, "open shares snapshot with branches")
     tap.equal(summary.entries, 1, "open shares snapshot with status")
   end
@@ -379,17 +501,17 @@ local function run(context)
         terminal_id = 1,
         runtime_id = 11,
         generation = 100,
-        zones = { { metadata = { cwd = "~/projects/foo" } } },
+        zones = { { metadata = { cwd = "/srv/git/repo" } } },
       },
       spawn_outputs = {
-        ["rev-parse\0--show-toplevel"] = "~/projects/foo\n",
+        ["rev-parse\0--show-toplevel"] = "/srv/git/repo\n",
         ["status\0--porcelain"] = " M src/a.txt\n",
       },
     })
     local plugin = activate(host)
     local entries = host:run("status", {})
     tap.equal(#entries, 1, "first pane serves one entry")
-    tap.equal(plugin.cached_cwd(), "~/projects/foo", "first cwd cached")
+    tap.equal(plugin.cached_cwd(), "/srv/git/repo", "first cwd cached")
     host.snapshot_value = {
       title = "two",
       terminal_id = 2,
@@ -415,16 +537,16 @@ local function run(context)
         terminal_id = 1,
         runtime_id = 11,
         generation = 100,
-        zones = { { metadata = { cwd = "~/projects/foo" } } },
+        zones = { { metadata = { cwd = "/srv/git/repo" } } },
       },
       spawn_outputs = {
-        ["rev-parse\0--show-toplevel"] = "~/projects/foo\n",
+        ["rev-parse\0--show-toplevel"] = "/srv/git/repo\n",
         ["status\0--porcelain"] = " M src/a.txt\n",
       },
     })
     local plugin = activate(host)
     host:run("status", {})
-    tap.equal(plugin.cached_cwd(), "~/projects/foo", "pane one cached")
+    tap.equal(plugin.cached_cwd(), "/srv/git/repo", "pane one cached")
     host.snapshot_value = nil
     host:publish("focus.changed", { terminal_id = 2, runtime_id = 22 })
     tap.equal(plugin.cached_cwd(), nil, "stale root pre-invalidated on focus change")
@@ -444,20 +566,20 @@ local function run(context)
         terminal_id = 7,
         runtime_id = 70,
         generation = 3,
-        zones = { { metadata = { cwd = "~/projects/foo/subdir" } } },
+        zones = { { metadata = { cwd = "/srv/git/repo/subdir" } } },
       },
       spawn_outputs = {
-        ["rev-parse\0--show-toplevel"] = "~/projects/foo\n",
+        ["rev-parse\0--show-toplevel"] = "/srv/git/repo\n",
         ["status\0--porcelain"] = " M src/lib.rs\n",
       },
     })
     activate(host)
     local entries = host:run("status", {})
     tap.equal(#entries, 1, "nested cwd still serves one entry")
-    tap.equal(entries[1].path, "~/projects/foo/src/lib.rs", "relative joins against root, not nested cwd")
+    tap.equal(entries[1].path, "/srv/git/repo/src/lib.rs", "relative joins against root, not nested cwd")
     tap.equal(#host.spawn_calls, 2, "root plus status spawns")
-    tap.equal(host.spawn_cwds[1], "~/projects/foo/subdir", "rev-parse runs in nested pane cwd")
-    tap.equal(host.spawn_cwds[2], "~/projects/foo/subdir", "status runs in nested pane cwd")
+    tap.equal(host.spawn_dirs[1], "/srv/git/repo/subdir", "rev-parse selects the nested pane cwd")
+    tap.equal(host.spawn_dirs[2], "/srv/git/repo/subdir", "status selects the nested pane cwd")
   end
 
   -- PLUG-APP-005: an unresolvable root drops relatives fail-closed while

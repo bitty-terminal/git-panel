@@ -9,12 +9,22 @@
 -- (`Text`, `Row`, `Column`, `List` only, depth `16`). It performs no I/O,
 -- spawns nothing, and never touches the network or the filesystem.
 --
--- The real `bitty` Lua bridge does not expose `bitty.process` yet; the
--- plugin degrades to snapshot-and-cache mode until it lands (see the package
--- README "Known gaps"). The stub exposes it so the allowlist wiring is
--- proven before the host surface ships.
+-- The real `bitty` Lua bridge exposes `bitty.process.spawn` as a
+-- consent-gated extra outside the stable Plugin API v1 guarantee. It accepts
+-- argv only: a plugin-supplied `cwd` option fails with `E_DEF_INVALID`
+-- (CTX-1345), and the stub mirrors that rejection so the repository gate
+-- catches the class instead of a real host. The pane directory therefore
+-- travels on argv as the leading `git -C <dir>` pair, with a validated
+-- absolute operand passed as a distinct element.
+--
+-- `-C` is itself a repository-escape vector in Core's current `[tools.git]`
+-- allowlist, so the stub rejects it by default. Success fixtures opt into
+-- `git_dir_policy = "confined"`, which models the pending host seam (a
+-- confined pane directory); a test that forgets the opt-in fails instead of
+-- assuming a host behavior that does not exist.
 
 local allowlist = require("git-panel.allowlist")
+local scope = require("git-panel.scope")
 
 local MockHost = {}
 MockHost.__index = MockHost
@@ -43,8 +53,10 @@ function MockHost.new(options)
   self.snapshot_value = options.snapshot
   self.spawn_outputs = options.spawn_outputs or {}
   self.spawn_calls = {}
-  self.spawn_cwds = {}
-  self.spawn_opts = {}
+  self.spawn_dirs = {}
+  -- `denied` mirrors Core's current `[tools.git]` policy (`-C` is a
+  -- repository-escape vector); `confined` models the pending host seam.
+  self.git_dir_policy = options.git_dir_policy or "denied"
   self.commands = {}
   self.subscriptions = {}
   self.handle_counter = 0
@@ -121,25 +133,59 @@ function MockHost:build_bitty()
       end,
     },
     process = {
--- In-memory adapter: records the spawn cwd separately so fixtures can
--- distinguish the pane cwd (spawn `opts.cwd`) from the repository root
--- (rev-parse output). `spawn_calls` stays the arg vectors for backward
--- compatibility; `spawn_cwds` parallels it with the observed cwd.
+-- In-memory adapter for the accepted `[tools.git]` argv contract. The bridge
+-- accepts argv only: exactly like Core (CTX-1345), an options table carrying
+-- `cwd` fails with the host's `E_DEF_INVALID` diagnostic, so a regression
+-- that reintroduces the unsupported option is caught by the repo gate rather
+-- than only on a real host. The pane directory must travel as the leading
+-- `git -C <dir>` pair, with `<dir>` a validated absolute path passed as a
+-- distinct argv element; staged output is keyed by the git args alone
+-- (`spawn_outputs["status\0--porcelain"]`).
       spawn = function(args, opts)
         self:assert_capability("bitty.process.spawn", "process.spawn:git")
-        if not allowlist.is_allowed_args(args) then
+        if opts ~= nil and type(opts) ~= "table" then
+          fail("validation", "E_DEF_INVALID", "process.spawn options must be a table")
+        end
+        if type(opts) == "table" then
+          for key in pairs(opts) do
+            if key == "cwd" then
+              fail(
+                "validation",
+                "E_DEF_INVALID",
+                "process.spawn cwd is not supported: a plugin-controlled working directory cannot be confined to the plugin filesystem grant"
+              )
+            end
+            fail(
+              "validation",
+              "E_DEF_INVALID",
+              "process.spawn does not support option '" .. tostring(key) .. "'"
+            )
+          end
+        end
+        if type(args) ~= "table" or args[1] ~= "-C" or not scope.is_absolute_dir(args[2]) then
+          fail(
+            "runtime",
+            "E_SPAWN_FAILED",
+            "test double requires the pane directory as -C <absolute dir>"
+          )
+        end
+        local dir = args[2]
+        local git_args = {}
+        for index = 3, #args do
+          git_args[#git_args + 1] = args[index]
+        end
+        if self.git_dir_policy ~= "confined" then
+          -- Core parity: `-C` / `-C<path>` is denied for every verb
+          -- (`is_allowed_git_args`, CTX-0465) and no host-derived cwd exists
+          -- yet, so the pane directory cannot be selected at all.
+          fail("runtime", "E_SPAWN_DENIED", "git invocation is outside the [tools.git] allowlist")
+        end
+        if not allowlist.is_allowed_args(git_args) then
           fail("runtime", "E_SPAWN_DENIED", "git invocation is outside the [tools.git] allowlist")
         end
         self.spawn_calls[#self.spawn_calls + 1] = args
-        local cwd = nil
-        if type(opts) == "table" and type(opts.cwd) == "string" then
-          cwd = opts.cwd
-        end
-        self.spawn_cwds = self.spawn_cwds or {}
-        self.spawn_cwds[#self.spawn_cwds + 1] = cwd
-        self.spawn_opts = self.spawn_opts or {}
-        self.spawn_opts[#self.spawn_opts + 1] = opts
-        local key = table.concat(args, "\0")
+        self.spawn_dirs[#self.spawn_dirs + 1] = dir
+        local key = table.concat(git_args, "\0")
         local output = self.spawn_outputs[key]
         if output == nil then
           output = ""
