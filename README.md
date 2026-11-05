@@ -116,6 +116,7 @@ replaces a shipped entry, and the plugin never binds a chord on its own.
 | ------------------------ | -------------------- | ----------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
 | `E_INCOMPATIBLE`         | `validation`         | The running host does not satisfy `>=0.0.24`, or Plugin API is not `^1.0`.                                        | Upgrade Bitty or install a Git Panel release whose `[compat]` minimum covers your host.                                                   |
 | `E_CAPABILITY_DENIED`    | `runtime`            | The `process.spawn:git`, `terminal.semantic-read`, or panel grant is missing, expired, or revoked.                | Re-run `bitty plugin install <path>` and approve the current grant set; `bitty plugin list` shows what is recorded.                       |
+| `E_CWD_UNAVAILABLE`      | `runtime`            | No validated absolute pane directory is cached (no semantic zone yet, or a relative/traversing/control value).    | Wait for shell integration to publish the pane cwd, or open the pane in a local directory; the plugin never falls back to the host cwd.   |
 | `E_SPAWN_DENIED`         | `runtime` / `budget` | The argv shape is invalid, the subcommand is outside the `[tools.git]` allowlist, or a spawn budget was exceeded. | Only the seven read-only verbs are admitted. The plugin issues only those; report the message if it appears for a normal command.         |
 | `E_SPAWN_FAILED`         | `runtime`            | `git` exited non-zero, the spawn or host failed, or tool confinement refused the spawn.                           | Check that `git` works in the pane's directory. A confinement refusal is fail-closed and is not retried; see the note below.              |
 | `E_SPAWN_UNAVAILABLE`    | `runtime`            | The host build has no `process.spawn` bridge, so every spawn-backed command fails closed.                         | Use a Bitty build that wires the Layer 2 spawn bridge. Until then `open` cannot resolve a repository and the listing commands cannot run. |
@@ -213,13 +214,16 @@ bundled Rust realization already declared exactly this set.
 
 ## Known gaps
 
-- **Host spawn bridge.** The current `bitty` Lua bridge
-  (`crates/bitty-lua/src/host.rs`) implements commands, events, settings,
-  store, terminal snapshots, notifications, and timers, but not
-  `bitty.process.spawn`. Spawn-backed commands fail closed with
-  `E_SPAWN_UNAVAILABLE` until that surface lands, including the
-  `rev-parse --show-toplevel` repository-root resolution. Tracked as a
-  follow-up task in `bitty`.
+- **Confined pane cwd for spawns.** The plugin selects the focused pane's
+  directory on argv (`git -C <dir>`) because Core's Lua bridge accepts argv
+  only: a plugin-supplied `cwd` option fails with `E_DEF_INVALID` (CTX-1345).
+  Core's `[tools.git]` allowlist also denies `-C` as a repository-escape
+  vector (normative: `bitty-docs` security extension-execution mediation), and
+  `process.spawn` has no host-derived cwd yet, so a real host currently
+  refuses the five spawn-backed commands with `E_SPAWN_DENIED`. The complete
+  fix needs a Core task to supply a confined, host-derived pane cwd (or a
+  reviewed amendment for a host-confined `-C`); the plugin already fails
+  closed rather than running git in an unrelated directory.
 - **Host `[tools.*]` manifest-table enforcement.** The accepted `[tools.git]`
   declaration is enforced by the pinned SDK linter (`bitty-plugin-lint`,
   R-SDK-2), but the `bitty` install-path TOML subset reader accepts no

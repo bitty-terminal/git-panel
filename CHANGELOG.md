@@ -74,6 +74,19 @@ focused pane`, replacing the internal spawn/bound/PR-token shorthand. The
 
 ### Fixed
 
+- **Spawn cwd option removed; pane directory travels on argv:** every
+  command (`open`, `status`, `diff`, `log`, `branch`) and the
+  `rev-parse --show-toplevel` helper now pass `git -C <pane dir>` as a
+  distinct argv pair instead of the `process.spawn` `cwd` option, which Core
+  rejects with `E_DEF_INVALID` (CTX-1345). The directory comes from the
+  semantic snapshot, is validated (POSIX-absolute, bounded, control-free, no
+  `..`), and a missing/invalid value fails closed with `E_CWD_UNAVAILABLE`
+  instead of running git in the host process cwd. The mock host now rejects
+  `cwd` exactly like Core, and a regression suite dispatches all five
+  commands plus a static guard against a second spawn argument. Hosts whose
+  `[tools.git]` allowlist denies `-C` (a normative repository-escape vector)
+  still refuse these spawns with `E_SPAWN_DENIED` until Core provides a
+  confined, host-derived pane cwd; see README Known gaps.
 - **Worktree-safe Markdown gate (#119):** `.markdownlint-cli2.jsonc` ignores
   `**/node_modules` and `.worktrees`, so `just check` run in a linked worktree
   no longer lints vendored dependency trees under

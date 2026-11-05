@@ -48,6 +48,18 @@ function M.run(context)
   tap.ok(not scope.is_absolute_path("src/lib.rs"), "relative not absolute")
   tap.ok(not scope.is_absolute_path(""), "empty not absolute")
 
+  -- Spawn directory (`git -C <dir>`) must be POSIX-absolute: argv is never
+  -- shell-expanded, so a `~` operand would be a literal relative name.
+  tap.ok(scope.is_absolute_dir("/srv/git/repo"), "absolute dir admitted")
+  tap.ok(scope.is_absolute_dir("/"), "root dir admitted")
+  tap.ok(scope.is_absolute_dir("/srv/git/repo/"), "trailing slash admitted")
+  tap.ok(not scope.is_absolute_dir("~/projects/foo"), "tilde dir rejected")
+  tap.ok(not scope.is_absolute_dir("srv/git/repo"), "relative dir rejected")
+  tap.ok(not scope.is_absolute_dir("/srv/git/../etc"), "dotdot dir rejected")
+  tap.ok(not scope.is_absolute_dir("/srv/git/repo\0"), "NUL dir rejected")
+  tap.ok(not scope.is_absolute_dir(""), "empty dir rejected")
+  tap.ok(not scope.is_absolute_dir(nil), "nil dir rejected")
+
   tap.ok(scope.is_within_root("/srv/git/repo", "/srv/git/repo"), "root itself within")
   tap.ok(scope.is_within_root("/srv/git/repo", "/srv/git/repo/src/lib.rs"), "arbitrary root child within")
   tap.ok(scope.is_within_root("~/projects/foo", "~/projects/foo/src/lib.rs"), "grant-root child within")

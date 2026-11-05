@@ -27,6 +27,7 @@ for _, suite in ipairs({
   "spec.scope_spec",
   "spec.listing_spec",
   "spec.scene_spec",
+  "spec.spawn_argv_spec",
   "spec.init_spec",
 }) do
   local ok, err = pcall(function()

@@ -65,10 +65,15 @@ just test-negative
   execute `init.lua` against it is a separate tooling task
   (`bitty-plugin-sdk` `docs/mock-host.md`, "Lua execution").
   `support/mock_host.lua` is this repository's bounded stand-in.
-- The `bitty` Lua bridge does not yet implement `bitty.process.spawn`, so
-  `init_spec.lua` exercises spawn behavior against the local mock host only;
-  in-host activation fails spawn-backed commands closed with
-  `E_SPAWN_UNAVAILABLE` until the surface lands.
+- The `bitty` Lua bridge exposes `bitty.process.spawn` as a consent-gated
+  extra outside the Plugin API v1 guarantee. It accepts argv only and rejects
+  a plugin-supplied `cwd` option with `E_DEF_INVALID` (CTX-1345); the local
+  mock host mirrors that rejection, and the pane directory travels on argv
+  (`git -C <dir>`). `init_spec.lua` and `spawn_argv_spec.lua` exercise this
+  contract against the mock; the real host's `[tools.git]` allowlist
+  currently also denies `-C` (a normative repository-escape vector), so
+  in-host spawn-backed commands fail closed with `E_SPAWN_DENIED` until Core
+  supplies a confined, host-derived pane cwd.
 - CI installs `lua5.4` and the pinned dependencies (including
   `bitty-plugin-lint` via `bun install`), but not `lua-language-server`, so
   only the LuaLS wrapper reports `skipped` (exit 0) in CI; install it locally

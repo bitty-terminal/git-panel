@@ -76,6 +76,11 @@ function M.run(context)
   tap.ok(not allowlist.is_allowed_args({ "status", "--index-file=/tmp/index" }), "denies index-file")
   tap.ok(not allowlist.is_allowed_args({ "log", "--work-tree=/tmp/wt" }), "denies work-tree")
   tap.ok(not allowlist.is_allowed_args({ "show", "--git-dir=/tmp/gd" }), "denies git-dir")
+  tap.ok(
+    not allowlist.is_allowed_args({ "-C", "/srv/git/repo", "status" }),
+    "denies a raw -C prefix; the plugin builder owns the directory pair"
+  )
+  tap.ok(not allowlist.is_allowed_args({ "status", "-C", "/srv/git/repo" }), "denies -C after the verb")
   tap.ok(not allowlist.is_allowed_args({ "diff", "--ext-diff" }), "denies ext-diff")
   tap.ok(not allowlist.is_allowed_args({ "diff", "--textconv" }), "denies textconv")
   tap.ok(not allowlist.is_allowed_args({ "log", "-o", "evil" }), "denies short output flag")

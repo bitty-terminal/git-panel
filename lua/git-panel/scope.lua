@@ -65,6 +65,27 @@ function M.is_absolute_path(path)
   return first == "/" or first == "~"
 end
 
+-- True for a directory operand usable as a spawn directory (`git -C`): a
+-- POSIX-absolute path (`/...`, no `~` because argv is never shell-expanded),
+-- bounded by `MAX_PATH_BYTES`, free of NUL/control bytes, and free of `..`
+-- segments. The spawn bridge passes argv entries as opaque data, so this is
+-- shape validation only; it keeps a relative, escaping, or option-shaped
+-- value out of the `-C` operand.
+function M.is_absolute_dir(path)
+  if not M.is_valid_path(path) then
+    return false
+  end
+  if string.sub(path, 1, 1) ~= "/" then
+    return false
+  end
+  for segment in string.gmatch(path, "[^/]+") do
+    if segment == ".." then
+      return false
+    end
+  end
+  return true
+end
+
 -- True when `candidate` equals `root` or nests strictly under it. The
 -- boundary is segment-wise (`root .. "/"`), so a sibling such as
 -- `<root>2/x` never prefix-matches, and any `..` segment fails closed.

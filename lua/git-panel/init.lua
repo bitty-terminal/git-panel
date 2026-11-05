@@ -17,9 +17,10 @@
 -- Fail-closed discipline: a denied `terminal.semantic-read` propagates
 -- instead of serving empty data, a denied or non-allowlisted spawn never
 -- executes, out-of-scope paths are dropped, and a missing host spawn surface
--- reports `E_SPAWN_UNAVAILABLE` (the real bridge does not expose
--- `bitty.process` yet; see the README "Known gaps"). Observation event
--- handlers refresh only the cached snapshot-derived state and never spawn.
+-- reports `E_SPAWN_UNAVAILABLE`. A missing or invalid pane directory reports
+-- `E_CWD_UNAVAILABLE` instead of running git in the host process cwd (a
+-- different repository or none). Observation event handlers refresh only the
+-- cached snapshot-derived state and never spawn.
 -- The cache binds the focused terminal identity (`terminal_id`,
 -- `runtime_id`, `generation` from the semantic snapshot): an identity change
 -- or a successful snapshot with missing cwd/title clears the stale value
@@ -190,9 +191,56 @@ function M.last_spawn_truncated()
   return last_spawn_truncated
 end
 
+-- Validate the cached pane directory used as the `git -C` operand. The value
+-- comes from host-observed semantic-zone metadata: it is display data, not a
+-- path the plugin may trust. `scope.is_absolute_dir` requires a
+-- POSIX-absolute, bounded, control-free path with no `..` segment, so a
+-- relative value, an option-shaped value (`-C` takes the next argv element
+-- verbatim), or a traversal never reaches the spawn.
+function M.pane_dir(cwd)
+  if scope.is_absolute_dir(cwd) then
+    return cwd
+  end
+  return nil
+end
+
+-- Build the full argv for one allowlisted git invocation. The pane directory
+-- is selected with `git -C <dir>` as a distinct argv element, never with the
+-- unsupported `process.spawn` `cwd` option (Core rejects it with
+-- `E_DEF_INVALID`) and never through shell interpolation (there is no shell
+-- on either side of the bridge). Returns `nil` fail-closed when the git args
+-- are outside the allowlist or the pane directory is missing/invalid.
+function M.spawn_argv(args, cwd)
+  if not allowlist.is_allowed_args(args) then
+    return nil
+  end
+  local dir = M.pane_dir(cwd)
+  if dir == nil then
+    return nil
+  end
+  local argv = { "-C", dir }
+  for index = 1, #args do
+    argv[#argv + 1] = args[index]
+  end
+  return argv
+end
+
 local function spawn_git(args)
   if not allowlist.is_allowed_args(args) then
     fail("E_SPAWN_DENIED", "git invocation is outside the [tools.git] allowlist")
+  end
+  -- H-GP-02: run git in the pane's repository, not the host root. Core's
+  -- Lua bridge accepts argv only (a plugin-supplied `cwd` option fails with
+  -- `E_DEF_INVALID`), so the directory travels as the `-C` operand. A nil or
+  -- invalid pane cwd fails closed instead of silently serving the host cwd's
+  -- repository (or none).
+  local dir = M.pane_dir(cache.cwd)
+  if dir == nil then
+    fail("E_CWD_UNAVAILABLE", "no validated absolute pane directory is cached")
+  end
+  local argv = { "-C", dir }
+  for index = 1, #args do
+    argv[#argv + 1] = args[index]
   end
   -- Layer 2 spawn surface (accepted `[tools.git]` slice, CTX-0425). It is
   -- beyond the vendored Plugin API v1 defs, so the field access carries a
@@ -203,9 +251,7 @@ local function spawn_git(args)
   if type(process_ns) ~= "table" or type(process_ns.spawn) ~= "function" then
     fail("E_SPAWN_UNAVAILABLE", "host has no process.spawn surface yet")
   end
-  -- H-GP-02: run git in the pane's repository, not the host root. A nil cwd
-  -- (no snapshot observed yet) leaves the key absent-equivalent for the host.
-  local result = process_ns.spawn(args, { cwd = cache.cwd })
+  local result = process_ns.spawn(argv)
   if type(result) ~= "table" or type(result.output) ~= "string" then
     fail("E_SPAWN_FAILED", "spawn returned no bounded output")
   end
