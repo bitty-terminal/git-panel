@@ -42,7 +42,6 @@ local function full_host(overrides)
   overrides.events = overrides.events or EVENTS
   overrides.snapshot = overrides.snapshot
     or { title = "git-panel", zones = { { metadata = { cwd = "/srv/git/repo" } } } }
-  overrides.git_dir_policy = overrides.git_dir_policy or "confined"
   return MockHost.new(overrides)
 end
 
@@ -91,10 +90,10 @@ local function run(context)
     tap.equal(#entries, 3, "three in-scope entries")
     tap.equal(entries[1].path, "~/projects/bar.rs", "entries sorted")
     tap.equal(#host.spawn_calls, 2, "root plus status spawns issued")
-    tap.equal(host.spawn_calls[1][1], "-C", "first spawn selects the pane directory")
-    tap.equal(host.spawn_calls[1][2], "/srv/git/repo", "pane directory is a distinct argv element")
-    tap.equal(host.spawn_calls[1][3], "rev-parse", "first spawn resolves root")
-    tap.equal(host.spawn_calls[2][3], "status", "second spawn is status")
+    tap.equal(host.spawn_calls[1][1], "rev-parse", "first spawn resolves root")
+    tap.equal(host.spawn_calls[2][1], "status", "second spawn is status")
+    tap.equal(host.spawn_dirs[1], "pane", "the host resolved the pane directory")
+    tap.equal(host.spawn_dirs[2], "pane", "every spawn uses the pane token")
   end
 
   -- Out-of-scope spawn output never reaches the panel (fail-closed filter).
@@ -209,28 +208,25 @@ local function run(context)
     tap.equal(type(err) == "table" and err.code or nil, "E_CAPABILITY_DENIED", "denied spawn code")
   end
 
-  -- Spawn-option parity (CTX-1345): Core's Lua bridge accepts argv only and
-  -- rejects a plugin-supplied `cwd` with E_DEF_INVALID. The mock mirrors the
-  -- exact diagnostic so the repo gate catches a regression instead of a real
-  -- host being the first place it fails.
+  -- Spawn-option parity (CTX-1715): Core's Lua bridge accepts exactly one
+  -- option, `cwd = "pane"`, and resolves the directory itself. Any other cwd
+  -- value fails with the host's diagnostic, so the repo gate catches a
+  -- regression instead of a real host being the first place it fails.
   do
     local host = full_host()
     activate(host)
     local ok, err = pcall(function()
-      return host.bitty.process.spawn(
-        { "-C", "/srv/git/repo", "status", "--porcelain" },
-        { cwd = "/srv/git/repo" }
-      )
+      return host.bitty.process.spawn({ "status", "--porcelain" }, { cwd = "/srv/git/repo" })
     end)
-    tap.ok(not ok, "spawn cwd option is rejected")
+    tap.ok(not ok, "a path-valued cwd is rejected")
     tap.equal(type(err) == "table" and err.code or nil, "E_DEF_INVALID", "spawn cwd code")
     tap.equal(
       type(err) == "table" and err.message or nil,
-      "process.spawn cwd is not supported: a plugin-controlled working directory cannot be confined to the plugin filesystem grant",
+      "process.spawn cwd must be the literal string 'pane'",
       "spawn cwd message mirrors Core"
     )
     local unknown_ok, unknown_err = pcall(function()
-      return host.bitty.process.spawn({ "-C", "/srv/git/repo", "status" }, { env = {} })
+      return host.bitty.process.spawn({ "status" }, { env = {} })
     end)
     tap.ok(not unknown_ok, "unknown spawn option is rejected")
     tap.equal(
@@ -241,8 +237,8 @@ local function run(context)
   end
 
   -- P1 regression: all five commands dispatch through the plugin runtime.
-  -- Each spawn selects the pane directory on argv (`git -C <dir>`) and never
-  -- uses the unsupported `cwd` option or a git run in the host cwd.
+  -- Each spawn carries the git args plus the host-resolved `cwd = "pane"`,
+  -- never a plugin-supplied path and never a run in the host cwd.
   do
     local host = full_host({
       spawn_outputs = {
@@ -269,63 +265,30 @@ local function run(context)
     end
     tap.ok(#host.spawn_calls > 0, "commands spawned git")
     for _, argv in ipairs(host.spawn_calls) do
-      tap.equal(argv[1], "-C", "argv selects the pane directory")
-      tap.equal(argv[2], "/srv/git/repo", "argv directory is the pane cwd")
-      tap.ok(argv[3] ~= nil, "argv carries the git verb after the directory")
+      tap.ok(argv[1] ~= nil, "argv carries the git verb")
+      tap.ok(argv[1] ~= "-C", "argv never selects a directory")
+    end
+    for _, cwd in ipairs(host.spawn_dirs) do
+      tap.equal(cwd, "pane", "every spawn uses the host-resolved pane token")
     end
   end
 
-  -- Core-policy gap (tracked cross-repository dependency): today's
-  -- `[tools.git]` allowlist denies `-C` as a repository-escape vector and
-  -- there is no host-derived cwd, so the same argv is refused. The gate
-  -- pins that divergence explicitly instead of assuming a host behavior that
-  -- does not exist.
+  -- A focused view without a terminal session is refused by the host with
+  -- E_SPAWN_CWD_UNAVAILABLE; the plugin has no path of its own to fall back
+  -- to, so the command fails closed.
   do
-    local host = full_host({ git_dir_policy = "denied" })
+    local host = full_host({ pane_cwd_available = false })
     activate(host)
     local ok, err = pcall(function()
       return host:run("status", {})
     end)
-    tap.ok(not ok, "current core policy refuses the pane directory")
-    tap.equal(type(err) == "table" and err.code or nil, "E_SPAWN_DENIED", "refused by [tools.git]")
-  end
-
-  -- A missing or unsafe pane directory fails closed with E_CWD_UNAVAILABLE
-  -- instead of spawning git in the host process cwd (the old exit-128 path).
-  do
-    local cases = {
-      { name = "no zones", snapshot = { title = "bad", zones = {} } },
-      {
-        name = "empty cwd",
-        snapshot = { title = "bad", zones = { { metadata = { cwd = "" } } } },
-      },
-      {
-        name = "relative cwd",
-        snapshot = { title = "bad", zones = { { metadata = { cwd = "relative/dir" } } } },
-      },
-      {
-        name = "traversal",
-        snapshot = { title = "bad", zones = { { metadata = { cwd = "/srv/git/../etc" } } } },
-      },
-      {
-        name = "control byte",
-        snapshot = { title = "bad", zones = { { metadata = { cwd = "/srv/git/repo\0" } } } },
-      },
-    }
-    for _, case in ipairs(cases) do
-      local host = full_host({ snapshot = case.snapshot })
-      activate(host)
-      local ok, err = pcall(function()
-        return host:run("status", {})
-      end)
-      tap.ok(not ok, "invalid pane cwd fails the command: " .. case.name)
-      tap.equal(
-        type(err) == "table" and err.code or nil,
-        "E_CWD_UNAVAILABLE",
-        "invalid pane cwd code: " .. case.name
-      )
-      tap.equal(#host.spawn_calls, 0, "no spawn without a pane directory: " .. case.name)
-    end
+    tap.ok(not ok, "a sessionless focused view fails the command")
+    tap.equal(
+      type(err) == "table" and err.code or nil,
+      "E_SPAWN_CWD_UNAVAILABLE",
+      "the host refusal surfaces unchanged"
+    )
+    tap.equal(#host.spawn_calls, 0, "no child is spawned")
   end
 
   -- The log command serves bounded commits from allowlisted output.
@@ -369,10 +332,10 @@ local function run(context)
     tap.equal(#host.spawn_calls, 0, "event handler spawns nothing")
   end
 
-  -- H-GP-02 / spawn-cwd parity: every spawn selects the pane cwd on argv
-  -- (`git -C <dir>`) instead of the unsupported spawn `cwd` option. Status
-  -- first resolves the repository root, so four spawns are observed:
-  -- rev-parse, status, branch, log.
+  -- H-GP-02 / spawn-cwd parity: every spawn passes the host-resolved
+  -- `cwd = "pane"` option and the git args as argv. Status first resolves
+  -- the repository root, so four spawns are observed: rev-parse, status,
+  -- branch, log.
   do
     local host = full_host()
     activate(host)
@@ -388,11 +351,11 @@ local function run(context)
     host:run("branch", {})
     host:run("log", {})
     tap.equal(#seen, 4, "four spawns observed (root plus three)")
-    tap.equal(seen[1].args[3], "rev-parse", "root resolves first")
+    tap.equal(seen[1].args[1], "rev-parse", "root resolves first")
     for _, call in ipairs(seen) do
-      tap.equal(call.args[1], "-C", "spawn selects the pane directory on argv")
-      tap.equal(call.args[2], "/srv/git/repo", "spawn directory is the pane cwd")
-      tap.equal(call.opts, nil, "spawn passes no options table")
+      tap.ok(call.args[1] ~= "-C", "spawn never selects a directory on argv")
+      tap.equal(type(call.opts), "table", "spawn passes the options table")
+      tap.equal(call.opts.cwd, "pane", "spawn uses the host-resolved pane token")
     end
   end
 
@@ -578,8 +541,8 @@ local function run(context)
     tap.equal(#entries, 1, "nested cwd still serves one entry")
     tap.equal(entries[1].path, "/srv/git/repo/src/lib.rs", "relative joins against root, not nested cwd")
     tap.equal(#host.spawn_calls, 2, "root plus status spawns")
-    tap.equal(host.spawn_dirs[1], "/srv/git/repo/subdir", "rev-parse selects the nested pane cwd")
-    tap.equal(host.spawn_dirs[2], "/srv/git/repo/subdir", "status selects the nested pane cwd")
+    tap.equal(host.spawn_dirs[1], "pane", "rev-parse uses the host-resolved pane cwd")
+    tap.equal(host.spawn_dirs[2], "pane", "status uses the host-resolved pane cwd")
   end
 
   -- PLUG-APP-005: an unresolvable root drops relatives fail-closed while
