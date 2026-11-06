@@ -11,20 +11,15 @@
 --
 -- The real `bitty` Lua bridge exposes `bitty.process.spawn` as a
 -- consent-gated extra outside the stable Plugin API v1 guarantee. It accepts
--- argv only: a plugin-supplied `cwd` option fails with `E_DEF_INVALID`
--- (CTX-1345), and the stub mirrors that rejection so the repository gate
--- catches the class instead of a real host. The pane directory therefore
--- travels on argv as the leading `git -C <dir>` pair, with a validated
--- absolute operand passed as a distinct element.
---
--- `-C` is itself a repository-escape vector in Core's current `[tools.git]`
--- allowlist, so the stub rejects it by default. Success fixtures opt into
--- `git_dir_policy = "confined"`, which models the pending host seam (a
--- confined pane directory); a test that forgets the opt-in fails instead of
--- assuming a host behavior that does not exist.
+-- argv plus one option: the bridge accepts exactly `cwd = "pane"` and the
+-- host resolves the globally focused view's directory itself (CTX-1715). Any
+-- other `cwd` value fails with the host's exact diagnostic, so the stub
+-- mirrors the real rejection and the repository gate catches the class
+-- instead of a real host. `pane_cwd_available = false` models a focused view
+-- without a terminal session, which the host refuses with
+-- `E_SPAWN_CWD_UNAVAILABLE`.
 
 local allowlist = require("git-panel.allowlist")
-local scope = require("git-panel.scope")
 
 local MockHost = {}
 MockHost.__index = MockHost
@@ -54,9 +49,8 @@ function MockHost.new(options)
   self.spawn_outputs = options.spawn_outputs or {}
   self.spawn_calls = {}
   self.spawn_dirs = {}
-  -- `denied` mirrors Core's current `[tools.git]` policy (`-C` is a
-  -- repository-escape vector); `confined` models the pending host seam.
-  self.git_dir_policy = options.git_dir_policy or "denied"
+  -- Whether the focused view has a terminal session for `cwd = "pane"`.
+  self.pane_cwd_available = options.pane_cwd_available ~= false
   self.commands = {}
   self.subscriptions = {}
   self.handle_counter = 0
@@ -133,58 +127,57 @@ function MockHost:build_bitty()
       end,
     },
     process = {
--- In-memory adapter for the accepted `[tools.git]` argv contract. The bridge
--- accepts argv only: exactly like Core (CTX-1345), an options table carrying
--- `cwd` fails with the host's `E_DEF_INVALID` diagnostic, so a regression
--- that reintroduces the unsupported option is caught by the repo gate rather
--- than only on a real host. The pane directory must travel as the leading
--- `git -C <dir>` pair, with `<dir>` a validated absolute path passed as a
--- distinct argv element; staged output is keyed by the git args alone
+-- In-memory adapter for the accepted `[tools.git]` argv contract and the
+-- host-resolved pane cwd (CTX-1715). Exactly like Core, the only accepted
+-- option is `cwd = "pane"`; any other value fails with the host's
+-- `E_DEF_INVALID` diagnostic, so a regression that reintroduces a
+-- plugin-supplied path is caught by the repo gate rather than only on a real
+-- host. Staged output is keyed by the git args alone
 -- (`spawn_outputs["status\0--porcelain"]`).
       spawn = function(args, opts)
         self:assert_capability("bitty.process.spawn", "process.spawn:git")
         if opts ~= nil and type(opts) ~= "table" then
           fail("validation", "E_DEF_INVALID", "process.spawn options must be a table")
         end
+        local pane_cwd = false
         if type(opts) == "table" then
-          for key in pairs(opts) do
-            if key == "cwd" then
+          for key, value in pairs(opts) do
+            if key ~= "cwd" then
               fail(
                 "validation",
                 "E_DEF_INVALID",
-                "process.spawn cwd is not supported: a plugin-controlled working directory cannot be confined to the plugin filesystem grant"
+                "process.spawn does not support option '" .. tostring(key) .. "'"
               )
             end
-            fail(
-              "validation",
-              "E_DEF_INVALID",
-              "process.spawn does not support option '" .. tostring(key) .. "'"
-            )
+            if value ~= "pane" then
+              fail(
+                "validation",
+                "E_DEF_INVALID",
+                "process.spawn cwd must be the literal string 'pane'"
+              )
+            end
+            pane_cwd = true
           end
         end
-        if type(args) ~= "table" or args[1] ~= "-C" or not scope.is_absolute_dir(args[2]) then
+        if type(args) ~= "table" or #args == 0 then
+          fail("runtime", "E_SPAWN_FAILED", "test double requires a non-empty argv")
+        end
+        if not pane_cwd then
           fail(
             "runtime",
-            "E_SPAWN_FAILED",
-            "test double requires the pane directory as -C <absolute dir>"
+            "E_SPAWN_CWD_UNAVAILABLE",
+            "test double requires cwd = 'pane': the host resolves the focused view's directory"
           )
         end
-        local dir = args[2]
-        local git_args = {}
-        for index = 3, #args do
-          git_args[#git_args + 1] = args[index]
+        if self.pane_cwd_available == false then
+          fail("runtime", "E_SPAWN_CWD_UNAVAILABLE", "the focused view has no terminal session")
         end
-        if self.git_dir_policy ~= "confined" then
-          -- Core parity: `-C` / `-C<path>` is denied for every verb
-          -- (`is_allowed_git_args`, CTX-0465) and no host-derived cwd exists
-          -- yet, so the pane directory cannot be selected at all.
-          fail("runtime", "E_SPAWN_DENIED", "git invocation is outside the [tools.git] allowlist")
-        end
+        local git_args = args
         if not allowlist.is_allowed_args(git_args) then
           fail("runtime", "E_SPAWN_DENIED", "git invocation is outside the [tools.git] allowlist")
         end
         self.spawn_calls[#self.spawn_calls + 1] = args
-        self.spawn_dirs[#self.spawn_dirs + 1] = dir
+        self.spawn_dirs[#self.spawn_dirs + 1] = "pane"
         local key = table.concat(git_args, "\0")
         local output = self.spawn_outputs[key]
         if output == nil then
