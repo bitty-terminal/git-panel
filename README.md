@@ -100,7 +100,7 @@ return {
   keymaps = {
     {
       chord = "ctrl+shift+g",
-      action = "bitty-terminal.git-panel:open",
+      action = "command:bitty-terminal.git-panel:open",
       context = "global",
     },
   },
