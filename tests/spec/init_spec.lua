@@ -16,11 +16,11 @@ local EVENTS = {
   "terminal.cwd-changed",
   "terminal.title-changed",
   "focus.changed",
+  "overlay.released",
 }
 
 local GRANTS = {
-  "panel.provider",
-  "panel.create",
+  "ui.overlay.focus",
   "terminal.semantic-read",
   "process.spawn:git",
 }
@@ -45,6 +45,25 @@ local function full_host(overrides)
   return MockHost.new(overrides)
 end
 
+-- Flatten a Column/List scene into its row strings (the overlay host stacks
+-- direct children as rows).
+local function scene_lines(component)
+  local lines = {}
+  for _, child in ipairs(component.children or {}) do
+    lines[#lines + 1] = child.text or ""
+  end
+  return lines
+end
+
+local function scene_contains(component, needle)
+  for _, line in ipairs(scene_lines(component)) do
+    if string.find(line, needle, 1, true) ~= nil then
+      return true
+    end
+  end
+  return false
+end
+
 local function run(context)
   local tap = context.tap
 
@@ -56,7 +75,7 @@ local function run(context)
     for _, qualified in ipairs(COMMANDS) do
       tap.ok(host.commands[qualified] ~= nil, "registered " .. qualified)
     end
-    tap.equal(#host.subscriptions, 3, "three subscriptions")
+    tap.equal(#host.subscriptions, 4, "four subscriptions")
     for _, kind in ipairs(EVENTS) do
       local found = false
       for _, subscription in ipairs(host.subscriptions) do
@@ -76,19 +95,20 @@ local function run(context)
     tap.equal(type(err) == "table" and err.code or nil, "E_EVENT_UNDECLARED", "undeclared event code")
   end
 
-  -- The status command serves bounded, scope-checked entries from the
-  -- allowlisted spawn output. Status resolves the repository root first
+  -- The status command serves bounded entries from the allowlisted spawn
+  -- output. Status resolves the repository root first
   -- (`rev-parse --show-toplevel`), then the status payload.
   do
     local host = full_host({
       spawn_outputs = {
-        ["status\0--porcelain"] = " M ~/projects/foo.txt\nA  ~/projects/bar.rs\n?? ~/projects/new.txt\n",
+        ["rev-parse\0--show-toplevel"] = "/srv/git/repo\n",
+        ["status\0--porcelain"] = " M foo.txt\nA  bar.rs\n?? new.txt\n",
       },
     })
     activate(host)
     local entries = host:run("status", {})
-    tap.equal(#entries, 3, "three in-scope entries")
-    tap.equal(entries[1].path, "~/projects/bar.rs", "entries sorted")
+    tap.equal(#entries, 3, "three entries")
+    tap.equal(entries[1].path, "/srv/git/repo/bar.rs", "entries sorted")
     tap.equal(#host.spawn_calls, 2, "root plus status spawns issued")
     tap.equal(host.spawn_calls[1][1], "rev-parse", "first spawn resolves root")
     tap.equal(host.spawn_calls[2][1], "status", "second spawn is status")
@@ -96,17 +116,21 @@ local function run(context)
     tap.equal(host.spawn_dirs[2], "pane", "every spawn uses the pane token")
   end
 
-  -- Out-of-scope spawn output never reaches the panel (fail-closed filter).
+  -- Absolute paths are admitted only inside the resolved repository root.
+  -- There is no `~/projects` grant prefix any more, so a path under another
+  -- host directory is not rejected for its location alone.
   do
     local host = full_host({
       spawn_outputs = {
-        ["status\0--porcelain"] = " M ~/projects/ok.txt\n M /etc/passwd\n",
+        ["rev-parse\0--show-toplevel"] = "/srv/git/repo\n",
+        ["status\0--porcelain"] = " M ok.txt\n M /etc/passwd\n M /srv/git/repo/inside.txt\n",
       },
     })
     activate(host)
     local entries = host:run("status", {})
-    tap.equal(#entries, 1, "outside-scope line dropped")
-    tap.equal(entries[1].path, "~/projects/ok.txt", "in-scope line kept")
+    tap.equal(#entries, 2, "root-relative and in-root absolute lines kept")
+    tap.equal(entries[1].path, "/srv/git/repo/inside.txt", "in-root absolute kept")
+    tap.equal(entries[2].path, "/srv/git/repo/ok.txt", "relative joined")
   end
 
   -- H-GP-01 / PLUG-APP-005: real porcelain vectors are repo-root-relative
@@ -175,7 +199,7 @@ local function run(context)
 
   -- Denied snapshot capability fails closed instead of serving empty data.
   do
-    local host = full_host({ grants = { "panel.provider", "panel.create", "process.spawn:git" } })
+    local host = full_host({ grants = { "ui.overlay.focus", "process.spawn:git" } })
     activate(host)
     local ok, err = pcall(function()
       return host:run("status", {})
@@ -199,7 +223,7 @@ local function run(context)
 
   -- Denied spawn grant fails closed at the host gate.
   do
-    local host = full_host({ grants = { "panel.provider", "panel.create", "terminal.semantic-read" } })
+    local host = full_host({ grants = { "ui.overlay.focus", "terminal.semantic-read" } })
     activate(host)
     local ok, err = pcall(function()
       return host:run("status", {})
@@ -297,6 +321,7 @@ local function run(context)
   do
     local host = full_host({
       spawn_outputs = {
+        ["rev-parse\0--show-toplevel"] = "/srv/git/repo\n",
         ["log\0--oneline\0-n\0" .. "10"] = "def5678 add feature\nabc1234 fix bug\n",
       },
     })
@@ -311,6 +336,7 @@ local function run(context)
   do
     local host = full_host({
       spawn_outputs = {
+        ["rev-parse\0--show-toplevel"] = "/srv/git/repo\n",
         ["branch\0-a"] = "* main\n  feature/foo\n",
       },
     })
@@ -342,7 +368,7 @@ local function run(context)
     local seen = {}
     host.bitty.process.spawn = function(args, opts)
       seen[#seen + 1] = { args = args, opts = opts }
-      if args[3] == "rev-parse" then
+      if args[1] == "rev-parse" then
         return { status = 0, output = "/srv/git/repo\n" }
       end
       return { status = 0, output = "" }
@@ -367,10 +393,10 @@ local function run(context)
     tap.equal(plugin.MAX_SPAWN_OUTPUT_BYTES, 8192, "spawn bound pins 8 KiB")
     local lines = {}
     for i = 1, 600 do
-      lines[#lines + 1] = " M ~/projects/file" .. i .. ".txt"
+      lines[#lines + 1] = " M file" .. i .. ".txt"
     end
     host.bitty.process.spawn = function(args, _opts)
-      if args[3] == "rev-parse" then
+      if args[1] == "rev-parse" then
         return { status = 0, output = "/srv/git/repo\n" }
       end
       return { status = 0, output = table.concat(lines, "\n") .. "\n" }
@@ -379,10 +405,10 @@ local function run(context)
     tap.ok(plugin.last_spawn_truncated(), "oversized output sets truncation bit")
     tap.le(#entries, 128, "entries still display-bounded after truncation")
     host.bitty.process.spawn = function(args, _opts)
-      if args[3] == "rev-parse" then
+      if args[1] == "rev-parse" then
         return { status = 0, output = "/srv/git/repo\n" }
       end
-      return { status = 0, output = " M ~/projects/foo.txt\n" }
+      return { status = 0, output = " M foo.txt\n" }
     end
     host:run("status", {})
     tap.ok(not plugin.last_spawn_truncated(), "small output clears truncation bit")
@@ -394,13 +420,13 @@ local function run(context)
     local host = full_host()
     local plugin = activate(host)
     local bound = plugin.MAX_SPAWN_OUTPUT_BYTES
-    local phantom_line = " M ~/projects/phantom.txt"
+    local phantom_line = " M phantom.txt"
     -- Bytes of the phantom line left before the cut: enough for ` M ` plus a
-    -- partial in-scope `~/projects/` path to look like a real entry.
-    local keep = 24
+    -- partial path to look like a real entry.
+    local keep = 8
     tap.ok(keep < #phantom_line, "fixture keeps a parseable phantom prefix")
     local function fill_to(length)
-      local chunk = " M ~/projects/fill.txt\n"
+      local chunk = " M fill.txt\n"
       local out = string.rep(chunk, math.floor(length / #chunk))
       local rest = length - #out
       if rest > 0 then
@@ -413,7 +439,7 @@ local function run(context)
     local output = head .. phantom_line .. "\n"
     tap.ok(#output > bound, "fixture exceeds the 8 KiB bound")
     host.bitty.process.spawn = function(args, _opts)
-      if args[3] == "rev-parse" then
+      if args[1] == "rev-parse" then
         return { status = 0, output = "/srv/git/repo\n" }
       end
       return { status = 0, output = output }
@@ -429,14 +455,16 @@ local function run(context)
     tap.ok(not phantom_served, "partial trailing line is not served")
   end
 
-  -- M-GP-06: open snapshots exactly once and shares it between the branch
-  -- and status derivations.
+  -- M-GP-06 + bitty#2966: open snapshots exactly once, shares it between the
+  -- branch/status/log derivations, and presents a visible overlay panel whose
+  -- scene carries the branch, status rows, and recent-log rows.
   do
     local host = full_host({
       spawn_outputs = {
         ["rev-parse\0--show-toplevel"] = "/srv/git/repo\n",
         ["branch\0-a"] = "* main\n  feature/foo\n",
-        ["status\0--porcelain"] = " M src/lib.rs\n",
+        ["status\0--porcelain"] = " M src/lib.rs\nA  README.md\n",
+        ["log\0--oneline\0-n\0" .. "10"] = "abc1234 fix bug\ndef5678 add feature\n",
       },
     })
     activate(host)
@@ -450,8 +478,138 @@ local function run(context)
     tap.equal(snapshots, 1, "open takes one snapshot")
     tap.equal(summary.cwd, "/srv/git/repo", "open reports pane cwd")
     tap.equal(summary.repo_root, "/srv/git/repo", "open reports resolved root")
+    tap.equal(summary.branch, "main", "open reports the current branch")
     tap.equal(summary.branches, 2, "open shares snapshot with branches")
-    tap.equal(summary.entries, 1, "open shares snapshot with status")
+    tap.equal(summary.entries, 2, "open shares snapshot with status")
+    tap.equal(summary.commits, 2, "open shares snapshot with log")
+    tap.equal(summary.visible, true, "open reports a visible panel")
+    tap.equal(host.overlay.acquires, 1, "open acquires one overlay session")
+    tap.equal(host.overlay.visible, true, "the overlay session is presented")
+    tap.equal(host.overlay.updates, 1, "open paints the panel scene once")
+    tap.ok(host.overlay.scene ~= nil, "open mounts a panel scene")
+    tap.equal(host.overlay.scene.kind, "Column", "panel scene is a row stack")
+    tap.ok(scene_contains(host.overlay.scene, "Branch: main"), "panel shows the branch")
+    tap.ok(scene_contains(host.overlay.scene, "modified  src/lib.rs"), "panel shows status rows")
+    tap.ok(scene_contains(host.overlay.scene, "added  README.md"), "panel shows every status row")
+    tap.ok(scene_contains(host.overlay.scene, "abc1234  fix bug"), "panel shows recent log rows")
+    tap.ok(scene_contains(host.overlay.scene, "def5678  add feature"), "panel shows the log tail")
+  end
+
+  -- A second open refreshes the live session instead of acquiring a second
+  -- one; a Core-owned dismissal (Esc) clears the local session so the next
+  -- open presents a fresh surface.
+  do
+    local host = full_host({
+      spawn_outputs = {
+        ["rev-parse\0--show-toplevel"] = "/srv/git/repo\n",
+        ["branch\0-a"] = "* main\n",
+        ["status\0--porcelain"] = " M src/lib.rs\n",
+        ["log\0--oneline\0-n\0" .. "10"] = "abc1234 fix bug\n",
+      },
+    })
+    local plugin = activate(host)
+    host:run("open", {})
+    local first = plugin.panel_session()
+    tap.ok(first ~= nil, "open records the session handle")
+    host:run("open", {})
+    tap.equal(host.overlay.acquires, 1, "a second open reuses the session")
+    tap.equal(host.overlay.updates, 2, "a second open repaints the panel")
+    tap.equal(plugin.panel_session(), first, "the session handle is stable")
+    tap.ok(host:dismiss_overlay("cancelled"), "Core dismisses the session")
+    tap.equal(plugin.panel_session(), nil, "overlay.released clears the local session")
+    tap.equal(host.overlay.visible, false, "the dismissed surface is gone")
+    host:run("open", {})
+    tap.equal(host.overlay.acquires, 2, "the next open acquires a fresh session")
+    tap.equal(host.overlay.visible, true, "the fresh panel is presented")
+  end
+
+  -- A session Core ended but whose `overlay.released` observation has not
+  -- been delivered yet fails typed instead of orphaning a replacement; once
+  -- the observation arrives, the next open acquires a fresh session.
+  do
+    local host = full_host({
+      spawn_outputs = {
+        ["rev-parse\0--show-toplevel"] = "/srv/git/repo\n",
+        ["branch\0-a"] = "* main\n",
+        ["status\0--porcelain"] = " M src/lib.rs\n",
+        ["log\0--oneline\0-n\0" .. "10"] = "abc1234 fix bug\n",
+      },
+    })
+    activate(host)
+    host:run("open", {})
+    host.overlay.active = nil -- Core ended the session; the event is still queued
+    local ok, err = pcall(function()
+      return host:run("open", {})
+    end)
+    tap.ok(not ok, "a stale session fails the open")
+    tap.equal(type(err) == "table" and err.code or nil, "E_UI_NOT_OWNER", "stale-session code")
+    tap.equal(host.overlay.acquires, 1, "no replacement session is orphaned")
+    host:publish("overlay.released", { owner = PLUGIN_ID, reason = "cancelled" })
+    host:run("open", {})
+    tap.equal(host.overlay.acquires, 2, "the next open acquires a fresh session")
+    tap.equal(host.overlay.visible, true, "the recovered panel is presented")
+  end
+
+  -- bitty#2966: a pane outside a git repository raises a typed, user-readable
+  -- error instead of mounting an empty panel or returning `{}`.
+  do
+    local host = full_host({
+      spawn_outputs = {
+        ["rev-parse\0--show-toplevel"] = "",
+      },
+    })
+    activate(host)
+    local ok, err = pcall(function()
+      return host:run("open", {})
+    end)
+    tap.ok(not ok, "open fails outside a git repository")
+    tap.equal(type(err) == "table" and err.code or nil, "E_NOT_A_GIT_REPO", "typed non-repo code")
+    tap.ok(
+      type(err) == "table" and string.find(err.message or "", "git repository", 1, true) ~= nil,
+      "non-repo message is user-readable"
+    )
+    tap.equal(host.overlay.acquires, 0, "a failed read never mounts a panel")
+    tap.equal(host.overlay.visible, false, "a failed read never presents a panel")
+  end
+
+  -- The same typed failure applies to every read command, so a failed read
+  -- can never fabricate an empty listing.
+  do
+    local host = full_host({
+      spawn_outputs = {
+        ["rev-parse\0--show-toplevel"] = "",
+      },
+    })
+    activate(host)
+    for _, command in ipairs({ "status", "diff", "log", "branch" }) do
+      local ok, err = pcall(function()
+        return host:run(command, {})
+      end)
+      tap.ok(not ok, command .. " fails outside a git repository")
+      tap.equal(
+        type(err) == "table" and err.code or nil,
+        "E_NOT_A_GIT_REPO",
+        command .. " returns the typed non-repo code"
+      )
+    end
+  end
+
+  -- The pane cwd from `zones[].metadata.cwd` is display data, not a gate:
+  -- a snapshot with no zone cwd still resolves the repository through the
+  -- host-resolved spawn directory (bitty#2966 / bitty#2971).
+  do
+    local host = full_host({
+      snapshot = { title = "no-osc7", zones = {} },
+      spawn_outputs = {
+        ["rev-parse\0--show-toplevel"] = "/srv/git/repo\n",
+        ["status\0--porcelain"] = " M src/lib.rs\n",
+      },
+    })
+    local plugin = activate(host)
+    local entries = host:run("status", {})
+    tap.equal(#entries, 1, "status works without a snapshot cwd")
+    tap.equal(entries[1].path, "/srv/git/repo/src/lib.rs", "relative path joins the resolved root")
+    tap.equal(plugin.cached_cwd(), nil, "the display cwd stays absent")
   end
 
   -- PLUG-APP-004: the cache binds the focused terminal identity. A
@@ -545,8 +703,8 @@ local function run(context)
     tap.equal(host.spawn_dirs[2], "pane", "status uses the host-resolved pane cwd")
   end
 
-  -- PLUG-APP-005: an unresolvable root drops relatives fail-closed while
-  -- explicit-root headless use keeps working.
+  -- PLUG-APP-005 + bitty#2966: an unresolvable root is a typed failure, not
+  -- a silent empty listing; the pure parser still works headless.
   do
     local host = full_host({
       spawn_outputs = {
@@ -555,8 +713,11 @@ local function run(context)
       },
     })
     local plugin = activate(host)
-    local entries = host:run("status", {})
-    tap.equal(#entries, 0, "relatives without a root drop")
+    local ok, err = pcall(function()
+      return host:run("status", {})
+    end)
+    tap.ok(not ok, "unresolvable root fails the read")
+    tap.equal(type(err) == "table" and err.code or nil, "E_NOT_A_GIT_REPO", "typed root failure")
     tap.equal(plugin.cached_repo_root(), nil, "unresolvable root stays nil")
     local headless = plugin.parse_porcelain(" M src/lib.rs\n")
     tap.equal(#headless, 1, "pure parser still works headless")

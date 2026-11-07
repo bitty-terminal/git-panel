@@ -1,15 +1,20 @@
--- Working-tree read scope for Bitty Git Panel (bitty-terminal.git-panel).
+-- Working-tree path scope for Bitty Git Panel (bitty-terminal.git-panel).
 --
 -- Pure functions with no host dependency. Mirrors the former bundled Rust
 -- realization (`bitty-runtime/src/git_panel.rs`, removed by `bitty`
 -- CTX-0400): paths are bounded to `4096` bytes with no null or control
--- characters, and the granted read scope is exactly `~/projects/**`
--- (real-path resolved, symlinks/devices rejected per host policy). Any path
--- outside the scope fails closed via `nil`.
+-- characters.
+--
+-- The read grant is rootless (`fs.read:**`): the host anchors it at the
+-- directory a call requests (`bitty` #2971), so there is no fixed
+-- `~/projects` prefix and a repository rooted anywhere is readable. This
+-- module therefore performs lexical validation only; repository containment
+-- is checked against the resolved repository root (`is_within_root`), never
+-- against a hardcoded host path.
 
 local M = {}
 
-M.FS_READ_PATTERN = "~/projects/**"
+M.FS_READ_PATTERN = "**"
 M.MAX_PATH_BYTES = 4096
 
 function M.is_valid_path(path)
@@ -28,14 +33,11 @@ function M.is_valid_path(path)
   return true
 end
 
+-- True when `path` is a valid, traversal-free path. The rootless grant
+-- covers the requested directory, so any repository root is admitted; a
+-- `..` segment still fails closed.
 function M.is_within_repo(path)
   if not M.is_valid_path(path) then
-    return false
-  end
-  if path == "~/projects" or path == "~/projects/" then
-    return true
-  end
-  if string.sub(path, 1, 11) ~= "~/projects/" then
     return false
   end
   -- R15: reject only exact `..` segments so legit names containing two
@@ -67,9 +69,8 @@ end
 
 -- True when `candidate` equals `root` or nests strictly under it. The
 -- boundary is segment-wise (`root .. "/"`), so a sibling such as
--- `<root>2/x` never prefix-matches, and any `..` segment fails closed.
--- Unlike `is_within_repo`, the root is a parameter, so repositories rooted
--- anywhere (not just the `~/projects/` grant prefix) are supported.
+-- `<root>2/x` never prefix-matches, and any `..` segment fails closed. The
+-- root is a parameter, so repositories rooted anywhere are supported.
 function M.is_within_root(root, candidate)
   if not M.is_valid_path(root) or not M.is_valid_path(candidate) then
     return false

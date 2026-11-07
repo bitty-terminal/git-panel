@@ -59,8 +59,8 @@ function M.run(context)
     { "~/projects/foo.txt", "~/projects/bar.rs", "~/projects/foo.txt", "/etc/passwd" },
     "modified"
   )
-  tap.equal(#status, 2, "status deduped and scoped")
-  tap.equal(status[1].path, "~/projects/bar.rs", "status sorted")
+  tap.equal(#status, 3, "status deduped; no fixed grant prefix")
+  tap.equal(status[1].path, "/etc/passwd", "status sorted")
   tap.equal(status[1].status, "modified", "status carried")
 
   local many_status = {}

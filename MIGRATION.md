@@ -13,11 +13,21 @@ bundled-plugin split decision (OQ-053, `bitty-plugins-docs`
 `product/bundled-plugin-split-decision.md`), owned by `bitty` `CTX-0400`. It
 was scaffolded from `bitty-plugin-template`.
 
-The split changes no identity: the plugin id, capabilities, commands, and
-events are unchanged from the former bundled manifest. File name, keys, and
-limits of the manifest are the accepted v1 contract in `bitty-plugins-docs`
+The split kept the plugin id and commands; the event set gained the
+observation-only `overlay.released` for the panel session. The capability set
+changed for bitty#2966: the deferred `panel.provider`/`panel.create`
+candidates were replaced by the accepted W-01 `ui.overlay.focus` grant
+(`bitty.panel.create` allocates an inert host-owned `Created` record with no
+Lua content surface), and the rooted `fs.read:~/projects/**` request moved to
+the rootless `fs.read:**` grant anchored at the requested directory
+(bitty#2971). File name, keys, and limits of the manifest are the accepted v1
+contract in `bitty-plugins-docs`
 `specifications/plugin-platform-rfc.md` (OQ-012); the plugin manager and
 the host parse the manifest independently before any plugin code runs.
+
+The pinned SDK moved from `c3fa9b0` to `d5d117d` because the older pinned
+linter's closed capability set does not accept `ui.overlay.focus`; `d5d117d`
+is the pin the sibling `palette` plugin already uses.
 
 ## Accepted versus draft: the `[tools.git]` slice
 

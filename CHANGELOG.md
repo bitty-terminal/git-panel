@@ -74,6 +74,24 @@ focused pane`, replacing the internal spawn/bound/PR-token shorthand. The
 
 ### Fixed
 
+- **`open` now presents a panel; reads no longer assume `~/projects`
+  (bitty#2966):** `open` previously returned only `{cwd, repo_root, branches,
+entries}` and never created a surface. It now presents a W-01 focusable
+  overlay (`bitty.ui.overlay.acquire`/`update`, `ui.overlay.focus`) with the
+  current branch, up to 12 status rows, and up to 8 recent-log rows; `Esc`
+  closes the overlay and `overlay.released` clears the local session. The
+  repository root is resolved through the host-resolved pane cwd even when the
+  semantic snapshot carries no `zones[].metadata.cwd`, and a pane outside a
+  git repository raises the typed `E_NOT_A_GIT_REPO` error instead of
+  returning `{}` or an empty listing. The manifest's rooted
+  `fs.read:~/projects/**` request is replaced by the rootless `fs.read:**`
+  grant anchored at the requested directory (bitty#2971), and status paths
+  are contained against the resolved repository root rather than a fixed
+  home prefix. The pinned SDK moves to `d5d117d` so the accepted
+  `ui.overlay.focus` head validates; `panel.provider`/`panel.create` are
+  removed because `panel.create` has no content surface. Tests extend the mock
+  host with the overlay session and assert the panel payload, the typed
+  non-repo error, and the no-OSC-7 pane path.
 - **Spawn cwd option removed; pane directory travels on argv:** every
   command (`open`, `status`, `diff`, `log`, `branch`) and the
   `rev-parse --show-toplevel` helper now pass `git -C <pane dir>` as a

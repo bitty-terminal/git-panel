@@ -42,22 +42,22 @@ just test-negative
 
 ## Layout
 
-| Path                            | Purpose                                                                                                    |
-| ------------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| `run.lua`                       | Plain-Lua runner; exits non-zero on assertion failure.                                                     |
-| `support/tap.lua`               | Assertion helper (no external test framework).                                                             |
-| `support/mock_host.lua`         | Fail-closed in-process `bitty` stub modeling the used surface (commands, events, snapshot, Layer 2 spawn). |
-| `spec/allowlist_spec.lua`       | `[tools.git]` spawn allowlist and bound unit tests.                                                        |
-| `spec/scope_spec.lua`           | Working-tree read-scope unit tests.                                                                        |
-| `spec/listing_spec.lua`         | Bounded branch/status/commit listing unit tests.                                                           |
-| `spec/scene_spec.lua`           | Declarative scene composition unit tests.                                                                  |
-| `spec/init_spec.lua`            | Entry-point behavior against the mock host.                                                                |
-| `lua-defs/bitty.d.lua`          | Vendored LuaLS definitions from bitty-plugin-sdk (origin/main `a7fcd2b`).                                  |
-| `lua-defs/negative-fixture.lua` | Excluded-surface fixture that LuaLS must reject.                                                           |
-| `check-lua-luals.mjs`           | Positive/negative LuaLS workspace check.                                                                   |
-| `check-manifest-lint.mjs`       | Asserts the pinned `bitty-plugin-lint` `--json` report says `bitty-plugin.toml` is valid.                  |
-| `check-negative-fixtures.mjs`   | Rejects every `validator-negative/*.toml` fixture with the pinned SDK linter and checks the diagnostic.    |
-| `../validator-negative/`        | Seven known-bad manifests (one SDK rule each) plus `base.toml`, the byte-identical accepted control.       |
+| Path                            | Purpose                                                                                                                  |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `run.lua`                       | Plain-Lua runner; exits non-zero on assertion failure.                                                                   |
+| `support/tap.lua`               | Assertion helper (no external test framework).                                                                           |
+| `support/mock_host.lua`         | Fail-closed in-process `bitty` stub modeling the used surface (commands, events, snapshot, Layer 2 spawn, W-01 overlay). |
+| `spec/allowlist_spec.lua`       | `[tools.git]` spawn allowlist and bound unit tests.                                                                      |
+| `spec/scope_spec.lua`           | Working-tree read-scope unit tests.                                                                                      |
+| `spec/listing_spec.lua`         | Bounded branch/status/commit listing unit tests.                                                                         |
+| `spec/scene_spec.lua`           | Declarative scene composition unit tests.                                                                                |
+| `spec/init_spec.lua`            | Entry-point behavior against the mock host.                                                                              |
+| `lua-defs/bitty.d.lua`          | Vendored LuaLS definitions from bitty-plugin-sdk (`d5d117d`).                                                            |
+| `lua-defs/negative-fixture.lua` | Excluded-surface fixture that LuaLS must reject.                                                                         |
+| `check-lua-luals.mjs`           | Positive/negative LuaLS workspace check.                                                                                 |
+| `check-manifest-lint.mjs`       | Asserts the pinned `bitty-plugin-lint` `--json` report says `bitty-plugin.toml` is valid.                                |
+| `check-negative-fixtures.mjs`   | Rejects every `validator-negative/*.toml` fixture with the pinned SDK linter and checks the diagnostic.                  |
+| `../validator-negative/`        | Seven known-bad manifests (one SDK rule each) plus `base.toml`, the byte-identical accepted control.                     |
 
 ## Known gaps
 
@@ -77,3 +77,9 @@ just test-negative
   `bitty-plugin-lint` via `bun install`), but not `lua-language-server`, so
   only the LuaLS wrapper reports `skipped` (exit 0) in CI; install it locally
   for full conformance coverage.
+- The mock host models the W-01 focusable overlay (`ui.overlay.focus`,
+  `acquire`/`update`/`poll`/`release`, the single-capture invariant, and the
+  `overlay.released` observation). It validates v1 scene shape/depth/bounds so
+  `open` cannot pass an invalid panel payload. The presentation-only
+  `ui.overlay.show` surface is not modeled because its `ui.present` grant is
+  not in the accepted SDK capability set.
