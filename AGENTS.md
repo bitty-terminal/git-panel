@@ -19,15 +19,18 @@
 
 - Plugin id: `bitty-terminal.git-panel` (manifest `plugin.id`), repository
   `git-panel`, Lua module `lua/git-panel/`.
-- Purpose: git status panel with tiled branch, status, diff, and log
-  presentation through the panel slot, served through the allowlisted
-  `[tools.git]` system-CLI reuse contract.
-- Authority boundary: only `panel.provider`, `panel.create`,
-  `terminal.semantic-read`, `process.spawn:git`, and `fs.read` are requested.
-  No ambient spawn, shell interpolation, network, clipboard, terminal input,
-  or persistent-state authority beyond the declared scopes; no install-time
-  code execution. A wider request needs an explicitly scoped task and a
-  reviewed security note; never widen silently.
+- Purpose: git branch/status/diff/log presentation through the W-01 focusable
+  overlay, served through the allowlisted `[tools.git]` system-CLI reuse
+  contract. `bitty.panel.create` is not used: it allocates an inert
+  host-owned `Created` record with no Lua content surface.
+- Authority boundary: only `ui.overlay.focus`, `terminal.semantic-read`,
+  `process.spawn:git`, and the rootless `fs.read:**` grant are requested.
+  `ui.overlay.focus` is the coupled W-01 grant for the focusable overlay and
+  its transient input capture; the panel holds that capture only while open.
+  No ambient spawn, shell interpolation, network, clipboard, persistent
+  terminal-input, or persistent-state authority beyond the declared scopes;
+  no install-time code execution. A wider request needs an explicitly scoped
+  task and a reviewed security note; never widen silently.
 - Origin: this package is the independent first-party realization created by
   the OQ-053 bundled-plugin split decision ([bitty](https://github.com/bitty-terminal/bitty) `CTX-0400`). The `[tools.git]`
   slice is follow-up work recorded as `CTX-0425` under `CTX-0400`.

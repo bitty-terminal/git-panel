@@ -1,7 +1,8 @@
 --- Bitty Plugin API v1 LuaLS definitions.
 --- GENERATED FILE - DO NOT EDIT.
 --- Source: surface/bitty-plugin-api-v1.json
---- Contract: bitty-docs:docs/decisions/adrs/ADR-0009-plugin-api-v1-lua-surface.md + bitty-docs:docs/specifications/plugin-api-v1-lua-surface-rfc.md
+--- Contract: bitty-docs:docs/decisions/adrs/ADR-0009-plugin-api-v1-lua-surface.md + bitty-docs:docs/specifications/plugin-api-v1-lua-surface-rfc.md + bitty-docs:docs/decisions/adrs/ADR-0014-workspace-core-presentation-plugins.md + bitty-docs:docs/development/overlay-input-capture-contract.md + bitty-terminal-docs:specifications/composer-architecture.md
+--- Referenced (not authority): bitty-terminal-docs:specifications/search-selection-contract.md (draft) + bitty-plugins-docs:extensibility/history-and-storage-policy.md (draft) + bitty-plugins-docs:specifications/search-copy-mode-policy.md (draft)
 --- Regenerate: bun scripts/generate-lua-defs.ts --write
 --- Verify: just lua-defs-check
 ---@meta bitty
@@ -55,8 +56,9 @@ local BittyCommandsNamespace = {}
 ---@return BittyCommandHandle
 function BittyCommandsNamespace.register(def) end
 
---- Closed v1 event-name set; subscribing to an undeclared or unknown name is a registration error.
----@alias BittyEventName "plugin.activated"|"plugin.suspended"|"plugin.disposed"|"handler.violation"|"terminal.opened"|"terminal.closed"|"terminal.title-changed"|"terminal.cwd-changed"|"terminal.bell"|"focus.changed"|"selection.changed"|"process.exited"|"config.reloaded"|"intercept.command-dispatch"|"intercept.terminal-spawn"|"intercept.paste"|"intercept.open-url"
+--- Closed v1 event-name set; subscribing to an undeclared or unknown name is a registration error,
+--- and declaring any workspace.* name requires a granted workspace.read capability at activation.
+---@alias BittyEventName "plugin.activated"|"plugin.suspended"|"plugin.disposed"|"handler.violation"|"terminal.opened"|"terminal.closed"|"terminal.title-changed"|"terminal.cwd-changed"|"terminal.bell"|"focus.changed"|"selection.changed"|"process.exited"|"config.reloaded"|"workspace.created"|"workspace.closed"|"workspace.renamed"|"workspace.focused"|"workspace.changed"|"overlay.released"|"intercept.command-dispatch"|"intercept.terminal-spawn"|"intercept.paste"|"intercept.open-url"
 
 --- Event payload with no fields for lifecycle, signal, and coalescable observation events.
 ---@class BittyEmptyPayload
@@ -101,6 +103,17 @@ function BittyCommandsNamespace.register(def) end
 ---@field runtime_id integer Live PTY incarnation identity.
 ---@field exit_code integer Process exit status.
 
+--- workspace.closed, workspace.changed, and workspace.focused payload: identity only, never
+--- terminal content; delivered only to workspace.read holders and coalesced per host tick.
+---@class BittyWorkspaceEventPayload
+---@field id BittyWorkspaceId Stable workspace id.
+
+--- workspace.created and workspace.renamed payload: identity plus the bounded display name;
+--- delivered only to workspace.read holders.
+---@class BittyWorkspaceNamedEventPayload
+---@field id BittyWorkspaceId Stable workspace id.
+---@field name string Display name, bounded by Core to 32 characters.
+
 --- Interception payload with bounded sanitized metadata; rewriting content is not expressible.
 ---@class BittyInterceptPayload
 ---@field action string Bounded action label.
@@ -108,7 +121,7 @@ function BittyCommandsNamespace.register(def) end
 ---@field preview string Bounded sanitized preview; intercept.paste never carries paste text without clipboard.read.
 
 --- Union of the closed v1 event payload shapes.
----@alias BittyEventPayload BittyEmptyPayload|BittyTerminalOpenedPayload|BittyTerminalClosedPayload|BittyTerminalTitleChangedPayload|BittyTerminalCwdChangedPayload|BittyFocusChangedPayload|BittySelectionChangedPayload|BittyProcessExitedPayload|BittyInterceptPayload
+---@alias BittyEventPayload BittyEmptyPayload|BittyTerminalOpenedPayload|BittyTerminalClosedPayload|BittyTerminalTitleChangedPayload|BittyTerminalCwdChangedPayload|BittyFocusChangedPayload|BittySelectionChangedPayload|BittyProcessExitedPayload|BittyWorkspaceEventPayload|BittyWorkspaceNamedEventPayload|BittyOverlayReleasedPayload|BittyInterceptPayload
 
 --- Immutable bounded event envelope delivered to subscribed handlers.
 ---@class BittyEvent
@@ -116,9 +129,10 @@ function BittyCommandsNamespace.register(def) end
 ---@field sequence integer Monotonic delivery sequence.
 ---@field payload BittyEventPayload Immutable payload copy, never a live core object.
 
---- Observation and lifecycle return values are ignored; interception handlers return false to veto
---- and anything else to approve.
----@alias BittyEventHandler fun(event: BittyEvent): boolean|nil
+--- Observation and lifecycle return values are ignored; interception handlers return the literal
+--- false to veto and any other value (including nil) to approve, so the shared handler result
+--- domain is any.
+---@alias BittyEventHandler fun(event: BittyEvent): any
 
 --- Event subscription surface (L1). Subscriptions must match manifest-declared event types.
 ---@class BittyEventsNamespace
@@ -212,24 +226,26 @@ local BittyNotifyNamespace = {}
 function BittyNotifyNamespace.show(payload) end
 
 --- Environment read surface (L1) accepted by ADR 0006. This sub-table is absent unless the manifest
---- declares an env:<KEY> capability; when declared but not granted its functions fail closed with
---- E_CAPABILITY_DENIED and never enumerate keys.
+--- declares an env.read:<KEY> capability; when declared but not granted its functions fail closed
+--- with E_CAPABILITY_DENIED and never enumerate keys.
 ---@class BittyEnvNamespace
 local BittyEnvNamespace = {}
 
 --- Reads a desensitized environment value for a bounded ASCII key matching ^[A-Z_][A-Z0-9_]*$
 --- (1..64); keys outside the allowlist return nil, indistinguishable from an unset variable.
 --- Available only when the namespace is declared.
---- Capabilities: env:<KEY>.
---- Errors: E_ENV_KEY_INVALID, E_ENV_VALUE_TOO_LARGE, E_CAPABILITY_DENIED.
+--- Capabilities: env.read:<KEY>.
+--- Host status: deferred - always fails with E_NOT_IMPLEMENTED (runtime) until the host backend lands.
+--- Errors: E_NOT_IMPLEMENTED.
 ---@param name string
 ---@return string|nil
 function BittyEnvNamespace.get(name) end
 
 --- Reports presence without exposing the value beyond the trace surface. Available only when the
 --- namespace is declared.
---- Capabilities: env:<KEY>.
---- Errors: E_ENV_KEY_INVALID, E_CAPABILITY_DENIED.
+--- Capabilities: env.read:<KEY>.
+--- Host status: deferred - always fails with E_NOT_IMPLEMENTED (runtime) until the host backend lands.
+--- Errors: E_NOT_IMPLEMENTED.
 ---@param name string
 ---@return boolean
 function BittyEnvNamespace.has(name) end
@@ -251,7 +267,7 @@ local BittyServicesNamespace = {}
 --- Resolves a provider before activation; a missing provider fails closed with E_SERVICE_RESOLUTION
 --- unless opts.optional is true, and provider disappearance makes in-flight calls fail closed with
 --- E_SERVICE_GONE.
---- Errors: E_SERVICE_RESOLUTION, E_SERVICE_GONE.
+--- Errors: E_DEF_INVALID, E_SERVICE_VERSION_INVALID, E_SERVICE_RESOLUTION.
 ---@param iface string
 ---@param opts BittyServiceGetOpts
 ---@return BittyService|nil
@@ -260,13 +276,16 @@ function BittyServicesNamespace.get(iface, opts) end
 --- Provides an interface implementation during activation; the interface, version, and bounded
 --- schemas must already be declared in the manifest [services.provided] table form, and arguments
 --- and results are schema-validated by the host.
+--- Errors: E_DEF_INVALID, E_SERVICE_UNDECLARED.
 ---@param iface string
 ---@param impl BittyService
 ---@return BittyServiceHandle
 function BittyServicesNamespace.provide(iface, impl) end
 
 --- Accepted closed slot set. tabline is an exclusive claim; status components compose; overlay is
---- non-focusable presentation content.
+--- non-focusable presentation content. The host presents top, bottom, left, right, and statusline;
+--- tabline, overlay, and terminal have no host surface yet and ui.mount rejects them with
+--- E_UI_UNAVAILABLE.
 ---@alias BittyUiSlot "terminal"|"top"|"bottom"|"left"|"right"|"tabline"|"statusline"|"overlay"
 
 --- Bounded declarative component table shaped by the accepted SceneNode contract; v1 accepts Text,
@@ -274,18 +293,21 @@ function BittyServicesNamespace.provide(iface, impl) end
 --- Presentation RFC.
 ---@alias BittySceneNode table
 
---- Declarative UI contribution surface (L2); rich content requires ui.rich and the overlay slot
---- requires ui.overlay.
+--- Declarative UI contribution surface (L2); rich content requires ui.rich, the overlay slot
+--- requires ui.overlay, and the focusable overlay session requires ui.overlay.focus.
 ---@class BittyUiNamespace
+---@field overlay BittyUiOverlayNamespace Focusable overlay and transient input-capture sub-table (W-01); requires ui.overlay.focus.
 local BittyUiNamespace = {}
 
 --- Mounts declarative component content into an accepted semantic slot; rich content requires
---- ui.rich and the overlay slot additionally requires ui.overlay. Host layout owns placement and
---- decoration, and there are no global coordinates, shaders, pipelines, glyph injection, native
---- windows, or renderer handles.
+--- ui.rich, the overlay slot additionally requires ui.overlay, and the exclusive tabline slot
+--- requires a matching [lazy].claims entry (E_UI_CLAIM_REQUIRED). After those gates, an accepted
+--- slot the host does not present (tabline, overlay, terminal) fails closed with E_UI_UNAVAILABLE
+--- (runtime). Host layout owns placement and decoration, and there are no global coordinates,
+--- shaders, pipelines, glyph injection, native windows, or renderer handles.
 --- Capabilities: ui.rich.
 --- Conditional capabilities: ui.overlay (when slot == "overlay").
---- Errors: E_CAPABILITY_DENIED, E_UI_COMPONENT_INVALID.
+--- Errors: E_CAPABILITY_DENIED, E_UI_CLAIM_REQUIRED, E_UI_UNAVAILABLE, E_UI_COMPONENT_INVALID.
 ---@param slot BittyUiSlot
 ---@param component BittySceneNode
 ---@return BittyBlockHandle
@@ -301,9 +323,83 @@ function BittyUiNamespace.mount(slot, component) end
 ---@return boolean
 function BittyUiNamespace.update(handle, component) end
 
+--- Opaque generation-owned handle returned by bitty.ui.overlay.acquire; invalid after generation
+--- disposal.
+---@alias BittyOverlayHandle integer
+
+--- Presentation hints for bitty.ui.overlay.acquire; every field is optional and unknown fields are
+--- ignored.
+---@class BittyOverlaySpec
+---@field title? string Bounded overlay title text.
+---@field placeholder? string Bounded placeholder text.
+
+--- One queued input event with a decided type tag; field-level key, pointer, and IME encodings stay
+--- parked.
+---@class BittyOverlayEvent
+---@field seq integer Monotonic event sequence within the session.
+---@field type "key"|"text"|"pointer"|"paste" Decided input-event tag.
+---@field data? table Opaque tag payload within the per-event byte ceiling.
+
+--- Owner-initiated drain of already-queued input events; never a Core-driven callback.
+---@class BittyOverlayPollResult
+---@field status "active"|"released" Whether the session holds capture or is terminal per handle.
+---@field seq integer Monotonic sequence of the last event delivered to this owner in this session.
+---@field events BittyOverlayEvent[] Input events in order; empty when there is nothing new.
+---@field overflowed boolean Sticky flag; true once queue overflow has dropped an older event.
+---@field reason? string Present only with released; one of released, submitted, cancelled, focus_switched, unloaded, crashed, timeout.
+
+--- overlay.released payload; observation only, never intercepted.
+---@class BittyOverlayReleasedPayload
+---@field owner string Owning plugin id.
+---@field reason string Terminal reason: released, submitted, cancelled, focus_switched, unloaded, crashed, or timeout.
+
+--- Focusable overlay and transient input-capture surface (L2, W-01); the single coupled grant
+--- ui.overlay.focus covers acquire, update, poll, and release.
+---@class BittyUiOverlayNamespace
+local BittyUiOverlayNamespace = {}
+
+--- Requests the focusable overlay and the single transient input-capture session in one Core-owned
+--- switch; spec carries optional bounded title and placeholder hints with unknown fields ignored.
+--- Without ui.overlay.focus fails E_CAPABILITY_DENIED, a second acquire while active fails
+--- E_UI_ALREADY_CAPTURED, and safe mode fails E_UI_UNAVAILABLE.
+--- Capabilities: ui.overlay.focus.
+--- Errors: E_CAPABILITY_DENIED, E_UI_ALREADY_CAPTURED, E_UI_UNAVAILABLE, E_DEF_INVALID.
+---@param spec? BittyOverlaySpec
+---@return BittyOverlayHandle
+function BittyUiOverlayNamespace.acquire(spec) end
+
+--- Replaces the overlay content for a session the caller owns; the scene uses the accepted v1 node
+--- set under the v1 scene budgets. An update on a handle the caller does not own, or on a released
+--- handle, fails E_UI_NOT_OWNER and keeps the previous content.
+--- Capabilities: ui.overlay.focus.
+--- Errors: E_CAPABILITY_DENIED, E_UI_NOT_OWNER, E_UI_COMPONENT_INVALID.
+---@param handle BittyOverlayHandle
+---@param scene BittySceneNode
+---@return boolean
+function BittyUiOverlayNamespace.update(handle, scene) end
+
+--- Drains the session queue as an owner-initiated synchronous read of already-queued events; never
+--- a Core-driven callback and never on the input hot path. Returns status, seq, ordered events,
+--- sticky overflowed, and reason only with released.
+--- Capabilities: ui.overlay.focus.
+--- Errors: E_CAPABILITY_DENIED, E_UI_NOT_OWNER.
+---@param handle BittyOverlayHandle
+---@return BittyOverlayPollResult
+function BittyUiOverlayNamespace.poll(handle) end
+
+--- Ends a session the caller owns; idempotent on an already-released handle within the owning
+--- generation. The optional reason is submitted or cancelled and defaults to released; an invalid
+--- reason is E_DEF_INVALID and Core-reported reasons overwrite on involuntary terminal causes.
+--- Capabilities: ui.overlay.focus.
+--- Errors: E_CAPABILITY_DENIED, E_UI_NOT_OWNER, E_DEF_INVALID.
+---@param handle BittyOverlayHandle
+---@param reason? string
+---@return boolean
+function BittyUiOverlayNamespace.release(handle, reason) end
+
 --- Terminal snapshot options; only the semantic scope is accepted in v1.
 ---@class BittySnapshotOpts
----@field scope "semantic" The only accepted v1 scope.
+---@field scope? "semantic" The only accepted v1 scope.
 ---@field terminal_id? integer Target terminal; defaults to the focused view's attached terminal and requires terminal.semantic-read.
 
 --- Color value: "default", a palette index 0..255, or an "#RRGGBB" string.
@@ -382,8 +478,8 @@ function BittyUiNamespace.update(handle, component) end
 ---@field title string Bounded title text.
 ---@field zones? BittySemanticZone[] Semantic zones; may be absent.
 
---- Read-only terminal observation surface (L2) gated by terminal.semantic-read; there is no write
---- path to grid, cursor, modes, or scrollback in v1.
+--- Terminal observation plus the capability-gated PTY submit path (L2); submit writes only through
+--- the Core paste pipeline and never touches grid, cursor, modes, or scrollback.
 ---@class BittyTerminalNamespace
 local BittyTerminalNamespace = {}
 
@@ -394,6 +490,87 @@ local BittyTerminalNamespace = {}
 ---@param opts BittySnapshotOpts
 ---@return BittyTerminalSnapshot
 function BittyTerminalNamespace.snapshot(opts) end
+
+--- Submits text to the focused panel PTY through the capability-gated paste pipeline as one
+--- byte-exact bracketed-paste frame; over-cap, lease, and budget refusals return a denied outcome
+--- and emit nothing, and a frame that only buffers reports unavailable without charging the budget.
+--- Capabilities: terminal.input.submit.
+--- Errors: E_CAPABILITY_DENIED, E_DEF_INVALID.
+---@param text string
+---@return BittySubmitOutcome
+function BittyTerminalNamespace.submit(text) end
+
+--- terminal.submit outcome tag; mirrors TerminalSubmitOutcome at bitty 1df0459e (CTX-0929, W-103
+--- S-1b).
+---@alias BittySubmitStatus "accepted"|"denied"|"unavailable"
+
+--- terminal.submit denial detail; mirrors SubmitDeny at bitty 1df0459e (CTX-0929, W-103 S-1b) and
+--- never carries payload.
+---@alias BittySubmitDeny "too-large"|"lease-denied"|"budget-exceeded"
+
+--- terminal.submit unavailability detail; mirrors TerminalSubmitUnavailable at bitty 1df0459e
+--- (CTX-0929, W-103 S-1b).
+---@alias BittySubmitUnavailableReason "no-focused-view"|"buffered-only"
+
+--- terminal.submit typed outcome; mirrors TerminalSubmitOutcome at bitty 1df0459e (CTX-0929, W-103
+--- S-1b): denials emit nothing and leave the budget untouched.
+---@class BittySubmitOutcome
+---@field status BittySubmitStatus Outcome tag.
+---@field bytes? integer Present only with accepted; framed bytes delivered in one PTY write.
+---@field deny? BittySubmitDeny Present only with denied.
+---@field wanted? integer Present only with denied too-large; content bytes refused.
+---@field used? integer Present only with denied budget-exceeded; window bytes already charged.
+---@field cap? integer Present only with denied budget-exceeded; per-plugin window cap in bytes.
+---@field reason? BittySubmitUnavailableReason Present only with unavailable.
+
+--- Constrained process surface (L2); only the allowlisted external-editor round trip is wired and
+--- unconstrained process.spawn stays v1-OUT.
+---@class BittyProcessNamespace
+---@field editor BittyProcessEditorNamespace Allowlisted external-editor round trip (W-82); requires process.editor.
+local BittyProcessNamespace = {}
+
+--- Allowlisted external-editor round trip (L2, W-82); the single grant process.editor covers start
+--- and the temp file never leaves Core.
+---@class BittyProcessEditorNamespace
+local BittyProcessEditorNamespace = {}
+
+--- Runs one allowlisted external-editor round trip (nvim, vim, or vi matched exactly from $VISUAL
+--- then $EDITOR with no fallback) on a Core-owned 0600 temp file that is always removed; returns
+--- the typed outcome and never the temp path.
+--- Capabilities: process.editor.
+--- Errors: E_CAPABILITY_DENIED, E_DEF_INVALID.
+---@param opts? BittyEditorStartOpts
+---@return BittyEditorOutcome
+function BittyProcessEditorNamespace.start(opts) end
+
+--- Options for bitty.process.editor.start; every field is optional and unknown fields are ignored.
+---@class BittyEditorStartOpts
+---@field draft? string Initial draft text handed to the editor; defaults to empty and past the 64 KiB bound the round trip is unavailable with the file removed.
+---@field timeout_ms? integer Bounded editor wait in milliseconds; defaults to 120000 and larger requests clamp to 300000.
+
+--- process.editor.start outcome tag; mirrors EditorOutcome at bitty 1df0459e (CTX-0929, W-103 S-1b)
+--- minus the hosted-only Signal variant, which has no Lua spelling.
+---@alias BittyEditorStatus "edited"|"cancelled"|"denied"|"timeout"|"spawn-failed"|"non-zero"|"unavailable"
+
+--- process.editor.start denial detail; mirrors EditorDeny at bitty 1df0459e (CTX-0929, W-103 S-1b):
+--- no-editor when neither $VISUAL nor $EDITOR names an editor, not-allowed off the bare-name
+--- allowlist.
+---@alias BittyEditorDeny "no-editor"|"not-allowed"
+
+--- process.editor.start unavailability detail; SDK kebab-case projection of the static
+--- EditorOutcome::Unavailable reasons at bitty 1df0459e (CTX-0929, W-103 S-1b), never a path or
+--- payload.
+---@alias BittyEditorUnavailableReason "temp-unavailable"|"read-unavailable"|"too-large"|"invalid-utf8"|"wait-unavailable"
+
+--- process.editor.start typed outcome; mirrors EditorOutcome at bitty 1df0459e (CTX-0929, W-103
+--- S-1b): denials land before any temp file or child and failures preserve the previous draft.
+---@class BittyEditorOutcome
+---@field status BittyEditorStatus Outcome tag.
+---@field content? string Present only with edited; bounded UTF-8 text read back from the removed temp file.
+---@field deny? BittyEditorDeny Present only with denied.
+---@field detail? string Present only with spawn-failed; bounded host detail, never a path.
+---@field code? integer Present only with non-zero and only when the exit code is known.
+---@field reason? BittyEditorUnavailableReason Present only with unavailable.
 
 --- Host-owned task surface (L1) capped at 64 live tasks per plugin; exceeding the cap fails with
 --- E_BUDGET_TASK and never queues silently.
@@ -430,6 +607,185 @@ function BittyTimersNamespace.create(delay_ms, callback) end
 ---@return boolean
 function BittyTimersNamespace.cancel(timer_id) end
 
+--- bitty.debug.inspect target; panels is reserved and fails closed with E_NOT_IMPLEMENTED, and any
+--- other string is E_DEF_INVALID.
+---@alias BittyDebugInspectTarget "plugins"|"commands"|"events"|"grants"|"panels"
+
+--- Stable lowercase lifecycle label; failed never carries the failure message.
+---@alias BittyDebugPluginState "unloaded"|"loading"|"activating"|"active"|"suspended"|"disposing"|"disposed"|"failed"
+
+--- One plugins inspect row, sorted by id.
+---@class BittyDebugPluginRow
+---@field id string Owner-qualified plugin id.
+---@field version string Manifest version.
+---@field state BittyDebugPluginState Lifecycle label.
+---@field generation integer Activation generation (0 before the first activation).
+
+--- One commands inspect row, sorted by plugin, id, title.
+---@class BittyDebugCommandRow
+---@field plugin string Owning plugin id.
+---@field id string Command id as registered (unqualified).
+---@field title string Bounded command title.
+
+--- One events inspect row (an event subscription), sorted by plugin, kind.
+---@class BittyDebugEventRow
+---@field plugin string Owning plugin id.
+---@field kind string Subscribed event kind.
+
+--- bitty.debug.inspect result; never includes settings values, store contents, secrets, or terminal
+--- content.
+---@class BittyDebugInspectResult
+---@field target BittyDebugInspectTarget Echoed inspect target.
+---@field items BittyDebugPluginRow[]|BittyDebugCommandRow[]|BittyDebugEventRow[]|string[] Rows for the target, capped at 1024 items; grants yields the caller's own sorted capability ids only.
+---@field truncated boolean Whether rows were cut at the item cap.
+
+--- Positive monotonic trace handle returned by bitty.debug.trace; never reused, dropped with the
+--- owning generation.
+---@alias BittyDebugTraceHandle integer
+
+--- bitty.debug.trace options; unknown keys, wrong types, and out-of-range values are E_DEF_INVALID.
+---@class BittyDebugTraceOpts
+---@field enabled? boolean true (default) opens a new trace; false closes the trace named by handle.
+---@field filter? string Exact topic, or a prefix when the pattern ends with a single *; 1..128 printable ASCII bytes; rejected with enabled = false.
+---@field max_events? integer Drop-oldest ring size, 1..10000 (default 1000); rejected with enabled = false.
+---@field handle? BittyDebugTraceHandle Required with enabled = false and rejected otherwise.
+
+--- One recorded event, redacted for the trace owner's own grants.
+---@class BittyDebugTraceRecord
+---@field topic string Event kind.
+---@field sequence integer Runtime event sequence.
+---@field timestamp integer Milliseconds on a monotonic host clock (no wall clock).
+---@field payload table Event payload, replaced by { truncated = true, bytes = <n> } when its encoded size exceeds 4096 bytes.
+
+--- Drained trace buffer returned by bitty.debug.trace_get; draining empties the buffer.
+---@class BittyDebugTraceDrain
+---@field records BittyDebugTraceRecord[] Records in arrival order.
+---@field dropped integer Records lost to drop-oldest since the previous drain; resets after being reported.
+
+--- Devtools inspection surface; each entry point needs its own grant (debug.inspect, debug.trace,
+--- debug.control) with no implication between them. Host-implemented spellings; not part of the ADR
+--- 0009 v1 guarantee.
+---@class BittyDebugNamespace
+local BittyDebugNamespace = {}
+
+--- Read-only runtime inspection returning { target, items, truncated }; a non-string target is
+--- E_DEF_INVALID before the grant check, the reserved panels target fails closed with
+--- E_NOT_IMPLEMENTED, and other plugins' grants are never exposed.
+--- Capabilities: debug.inspect.
+--- Errors: E_DEF_INVALID, E_CAPABILITY_DENIED.
+---@param target BittyDebugInspectTarget
+---@return BittyDebugInspectResult
+function BittyDebugNamespace.inspect(target) end
+
+--- Opens (nil or enabled = true) or closes (enabled = false with handle) an event trace; a trace
+--- records only event kinds the plugin declares in [lazy].events, intersected with filter, at most
+--- 4 traces per plugin (E_DEF_LIMIT), and closing an unknown or foreign handle is E_DEF_INVALID.
+--- Capabilities: debug.trace.
+--- Errors: E_DEF_INVALID, E_DEF_LIMIT, E_CAPABILITY_DENIED.
+---@param opts? BittyDebugTraceOpts
+---@return BittyDebugTraceHandle
+function BittyDebugNamespace.trace(opts) end
+
+--- Drains a trace owned by this plugin; a non-integer handle is E_DEF_INVALID, and an unknown or
+--- foreign handle returns nil so other plugins' traces cannot be probed.
+--- Capabilities: debug.trace.
+--- Errors: E_DEF_INVALID, E_CAPABILITY_DENIED.
+---@param handle BittyDebugTraceHandle
+---@return BittyDebugTraceDrain|nil
+function BittyDebugNamespace.trace_get(handle) end
+
+--- High-risk lifecycle control (reload_plugin, suspend_plugin, resume_plugin, clear_state by plugin
+--- id); non-string arguments are E_DEF_INVALID, and the host fails closed before reading the grant
+--- or the target.
+--- Capabilities: debug.control.
+--- Host status: deferred - always fails with E_NOT_IMPLEMENTED (runtime) until the host backend lands.
+--- Errors: E_NOT_IMPLEMENTED.
+---@param action string
+---@param target string
+---@return any
+function BittyDebugNamespace.control(action, target) end
+
+--- Positive stable workspace id (Core creation sequence); survives index shifts and is never reused
+--- for another workspace.
+---@alias BittyWorkspaceId integer
+
+--- Attention flags of one workspace; the host reports every flag false until Core grows a
+--- per-workspace attention source.
+---@class BittyWorkspaceAttention
+---@field bell boolean A bell rang since the workspace was last focused.
+---@field activity boolean Output arrived while the workspace was inactive.
+---@field exited boolean A panel process in the workspace exited.
+
+--- One bitty.workspace.list row: identity, order, and structure only, never terminal content.
+---@class BittyWorkspaceInfo
+---@field id BittyWorkspaceId Stable workspace id.
+---@field name string Display name, truncated to 32 characters.
+---@field active boolean Whether this is the active workspace.
+---@field panel_count integer Number of panels (layout leaves).
+---@field attention BittyWorkspaceAttention Attention flags.
+
+--- Positional bitty.workspace.focus target.
+---@class BittyWorkspaceIndexTarget
+---@field index integer 1-based position, clamped to the last workspace like the Alt+N binding.
+
+--- Workspace domain (L1, ADR 0014): list is gated on workspace.read; every mutation is gated on
+--- workspace.control only (read never implies control), enqueues into a bounded host queue (32
+--- requests per tick), and returns whether it was queued, not applied. Spellings are host
+--- candidates pending OQ-056.
+---@class BittyWorkspaceNamespace
+local BittyWorkspaceNamespace = {}
+
+--- Lists workspaces in order, at most 16 rows (the Core MAX_WORKSPACES bound); names are truncated
+--- to 32 characters and rows never carry terminal content.
+--- Capabilities: workspace.read.
+--- Errors: E_CAPABILITY_DENIED.
+---@return BittyWorkspaceInfo[]
+function BittyWorkspaceNamespace.list() end
+
+--- Queues focusing a workspace by positive stable id or by { index = n } (1-based); an id that no
+--- longer exists at apply time is dropped fail-closed.
+--- Capabilities: workspace.control.
+--- Errors: E_DEF_INVALID, E_CAPABILITY_DENIED.
+---@param target BittyWorkspaceId|BittyWorkspaceIndexTarget
+---@return boolean
+function BittyWorkspaceNamespace.focus(target) end
+
+--- Queues creating a workspace and switching to it, subject to the Core capacity bound.
+--- Capabilities: workspace.control.
+--- Errors: E_CAPABILITY_DENIED.
+---@return boolean
+function BittyWorkspaceNamespace.new() end
+
+--- Queues switching to the next workspace (wraps).
+--- Capabilities: workspace.control.
+--- Errors: E_CAPABILITY_DENIED.
+---@return boolean
+function BittyWorkspaceNamespace.next() end
+
+--- Queues closing a workspace (nil closes the active one) through the kill-confirm gate: idle
+--- workspaces close immediately and live ones arm the user confirmation.
+--- Capabilities: workspace.control.
+--- Errors: E_DEF_INVALID, E_CAPABILITY_DENIED.
+---@param id? BittyWorkspaceId
+---@return boolean
+function BittyWorkspaceNamespace.close(id) end
+
+--- Queues renaming a workspace; name must be a non-blank UTF-8 string without control characters
+--- and at most 256 bytes (E_DEF_LIMIT), and Core truncates accepted names to 32 characters.
+--- Capabilities: workspace.control.
+--- Errors: E_DEF_INVALID, E_DEF_LIMIT, E_CAPABILITY_DENIED.
+---@param id BittyWorkspaceId
+---@param name string
+---@return boolean
+function BittyWorkspaceNamespace.rename(id, name) end
+
+--- Queues moving the focused panel of the active workspace into the workspace with this stable id.
+--- Capabilities: workspace.control.
+--- Errors: E_DEF_INVALID, E_CAPABILITY_DENIED.
+---@param id BittyWorkspaceId
+---@return boolean
+function BittyWorkspaceNamespace.move_panel(id) end
+
 --- Host-injected read-only module table; it is not loaded through require.
 ---@class bitty
 ---@field api_version string Host bridge API version (1.0.0); minor versions are additive only.
@@ -443,6 +799,9 @@ function BittyTimersNamespace.cancel(timer_id) end
 ---@field services BittyServicesNamespace
 ---@field ui BittyUiNamespace
 ---@field terminal BittyTerminalNamespace
+---@field process BittyProcessNamespace
 ---@field tasks BittyTasksNamespace
 ---@field timers BittyTimersNamespace
+---@field debug BittyDebugNamespace
+---@field workspace BittyWorkspaceNamespace
 bitty = {}

@@ -6,18 +6,29 @@
 -- while this file executes.
 --
 -- Accepted surface: Plugin API v1 Lua Surface RFC (ADR 0009) plus the
--- accepted Layer 2 `[tools.git]` slice (CTX-0425): capabilities requested in
--- `bitty-plugin.toml` are `panel.provider` (tiled panel factory),
--- `panel.create` (panel instantiation), `terminal.semantic-read` (read-only
+-- accepted Layer 2 `[tools.git]` slice (CTX-0425) and the accepted W-01
+-- overlay-input-capture contract. Capabilities requested in
+-- `bitty-plugin.toml` are `ui.overlay.focus` (the focusable overlay session
+-- and its transient input capture), `terminal.semantic-read` (read-only
 -- cwd/title observation), `process.spawn:git` (the seven allowlisted
--- read-only verbs with bounded output), and `fs.read:~/projects/**`
--- (working-tree read). The identifiers are unchanged from the former bundled
--- Rust realization (`bitty` CTX-0400); the split changes no identity.
+-- read-only verbs with bounded output), and the rootless `fs.read:**`
+-- working-tree grant anchored at the requested directory (`bitty` #2971).
+--
+-- Panel presentation: `bitty.panel.create` allocates an inert host-owned
+-- `Created` panel record with no Lua content surface, so it cannot show the
+-- repository summary. The supported content surface is the W-01 focusable
+-- overlay: `bitty.ui.overlay.acquire` mounts and presents the surface, and
+-- `bitty.ui.overlay.update` replaces its scene. The session owns transient
+-- input capture while open; `Esc` (or the host's idle/focus teardown) ends it
+-- and `overlay.released` clears the local session. The presentation-only
+-- `bitty.ui.overlay.show` surface is not usable here because its `ui.present`
+-- grant is not yet in the accepted SDK capability set.
 --
 -- Fail-closed discipline: a denied `terminal.semantic-read` propagates
 -- instead of serving empty data, a denied or non-allowlisted spawn never
--- executes, out-of-scope paths are dropped, and a missing host spawn surface
--- reports `E_SPAWN_UNAVAILABLE`. The host resolves the focused view's
+-- executes, a pane outside a git repository raises `E_NOT_A_GIT_REPO`
+-- instead of serving an empty listing, and a missing host spawn/overlay
+-- surface reports a typed error. The host resolves the focused view's
 -- directory for `cwd = "pane"` and refuses a sessionless view with
 -- `E_SPAWN_CWD_UNAVAILABLE`; the plugin never supplies a path or falls back
 -- to the host process cwd. Observation event handlers refresh only the
@@ -32,11 +43,22 @@
 local allowlist = require("git-panel.allowlist")
 local scope = require("git-panel.scope")
 local listing = require("git-panel.listing")
+local scene = require("git-panel.scene")
 
 local M = {}
 
 M.COMMANDS = { "open", "status", "diff", "log", "branch" }
-M.EVENTS = { "terminal.cwd-changed", "terminal.title-changed", "focus.changed" }
+M.EVENTS = {
+  "terminal.cwd-changed",
+  "terminal.title-changed",
+  "focus.changed",
+  "overlay.released",
+}
+
+-- One focusable overlay session per generation. `session` is the handle
+-- returned by `bitty.ui.overlay.acquire` while the panel is presented; the
+-- host destroys the surface on release, so every open acquires a fresh one.
+local panel = { session = nil }
 
 local cache = {
   cwd = nil,
@@ -49,6 +71,20 @@ local cache = {
 
 local function fail(code, message)
   error({ class = "runtime", code = code, message = message }, 0)
+end
+
+-- The W-01 overlay table, or nil on a host that predates it. Checked on every
+-- use (never cached) so a mid-generation bridge change cannot wedge the open
+-- path.
+local function overlay_table()
+  if bitty.ui == nil then
+    return nil
+  end
+  local overlay = bitty.ui.overlay
+  if type(overlay) ~= "table" then
+    return nil
+  end
+  return overlay
 end
 
 -- Read-only semantic snapshot. Errors propagate: a denied
@@ -229,15 +265,17 @@ local function spawn_git(args)
   if argv == nil then
     fail("E_SPAWN_DENIED", "git invocation is outside the [tools.git] allowlist")
   end
-  -- Layer 2 spawn surface (accepted `[tools.git]` slice, CTX-0425). It is
-  -- beyond the vendored Plugin API v1 defs, so the field access carries a
-  -- localized suppression; the negative LuaLS fixture still rejects every
-  -- other unknown surface.
+  -- Layer 2 spawn surface (accepted `[tools.git]` slice, CTX-0425).
+  -- `process.spawn` is the consent-gated extra outside the Plugin API v1
+  -- guarantee, so the field accesses carry localized suppressions; the
+  -- negative LuaLS fixture still rejects every other unknown surface.
   ---@diagnostic disable-next-line: undefined-field
   local process_ns = bitty.process
+  ---@diagnostic disable-next-line: undefined-field
   if type(process_ns) ~= "table" or type(process_ns.spawn) ~= "function" then
     fail("E_SPAWN_UNAVAILABLE", "host has no process.spawn surface yet")
   end
+  ---@diagnostic disable-next-line: undefined-field
   local result = process_ns.spawn(argv, M.spawn_options())
   if type(result) ~= "table" or type(result.output) ~= "string" then
     fail("E_SPAWN_FAILED", "spawn returned no bounded output")
@@ -497,12 +535,14 @@ local function repo_root_from_output(output)
   return first
 end
 
+-- Resolve the repository root through the host-resolved pane cwd. The cached
+-- snapshot cwd is display data only and is NOT a gate: a pane without an
+-- `OSC 7` zone still has a host-resolved spawn directory, so `rev-parse` can
+-- still name the root. This is the fix for a pane whose `zones[].metadata.cwd`
+-- is absent (bitty #2971 publishes it; older hosts may not).
 local function resolve_repo_root()
   if cache.repo_root ~= nil then
     return cache.repo_root
-  end
-  if cache.cwd == nil then
-    return nil
   end
   local output = spawn_git({ "rev-parse", "--show-toplevel" })
   local root = repo_root_from_output(output)
@@ -512,9 +552,21 @@ local function resolve_repo_root()
   return root
 end
 
+-- Typed fail-closed result for a pane outside a git repository. `rev-parse`
+-- writes its diagnostic to stderr, which the spawn surface does not return,
+-- so an empty/invalid stdout is the signal. Never fall through to an empty
+-- listing: a failed read must be visible to the user.
+local function require_repo_root()
+  local root = resolve_repo_root()
+  if root == nil then
+    fail("E_NOT_A_GIT_REPO", "the focused pane is not inside a git repository")
+  end
+  return root
+end
+
 local function status_entries()
   refresh_cache()
-  local root = resolve_repo_root()
+  local root = require_repo_root()
   local output = spawn_git({ "status", "--porcelain" })
   return status_entries_from_output(output, root)
 end
@@ -529,13 +581,12 @@ end
 
 local function branch_list()
   refresh_cache()
+  require_repo_root()
   local output = spawn_git({ "branch", "-a" })
   return branch_list_from_output(output)
 end
 
-local function commit_list()
-  refresh_cache()
-  local output = spawn_git({ "log", "--oneline", "-n", "10" })
+local function commit_list_from_output(output)
   local raw = {}
   for line in string.gmatch(output or "", "[^\n]+") do
     local hash, message = string.match(line, "^(%S+)%s+(.-)%s*$")
@@ -546,8 +597,16 @@ local function commit_list()
   return listing.list_commits(raw)
 end
 
+local function commit_list()
+  refresh_cache()
+  require_repo_root()
+  local output = spawn_git({ "log", "--oneline", "-n", "10" })
+  return commit_list_from_output(output)
+end
+
 local function diff_lines()
   refresh_cache()
+  require_repo_root()
   local output = spawn_git({ "diff", "--stat" })
   local lines = {}
   for line in string.gmatch(output or "", "[^\n]+") do
@@ -559,25 +618,115 @@ local function diff_lines()
   return lines
 end
 
+local function current_branch(branches)
+  for _, branch in ipairs(branches or {}) do
+    if branch.is_current then
+      return branch.name
+    end
+  end
+  return nil
+end
+
+-- Build the visible panel scene from already-derived data. Status entries
+-- keep their host-absolute paths for scope checks; the panel shows the
+-- repository-relative spelling.
+local function panel_scene(root, branches, entries, commits)
+  local display_status = {}
+  for _, entry in ipairs(entries) do
+    display_status[#display_status + 1] = {
+      path = scene.display_path(entry.path, root),
+      status = entry.status,
+    }
+  end
+  return scene.panel({
+    branch = current_branch(branches),
+    status = display_status,
+    status_total = #entries,
+    commits = commits,
+    commit_total = #commits,
+  })
+end
+
+-- End the live overlay session. Release is ungated and idempotent, so a
+-- revoked grant or an already-ended session still clears local state.
+local function close_panel()
+  local handle = panel.session
+  panel.session = nil
+  if handle == nil then
+    return false
+  end
+  local overlay = overlay_table()
+  if overlay ~= nil and type(overlay.release) == "function" then
+    pcall(overlay.release, handle, "cancelled")
+  end
+  return true
+end
+
+-- Present or refresh the panel through the W-01 focusable overlay. The
+-- spec-acquire path mounts and presents the surface under the single
+-- `ui.overlay.focus` grant; every failure is typed and propagates instead of
+-- degrading to a command-only result.
+local function present_panel(component)
+  local overlay = overlay_table()
+  if overlay == nil then
+    fail("E_UI_UNAVAILABLE", "host has no ui.overlay surface")
+    return false
+  end
+  if type(overlay.acquire) ~= "function" or type(overlay.update) ~= "function" then
+    fail("E_UI_UNAVAILABLE", "host has no ui.overlay surface")
+    return false
+  end
+  if panel.session == nil then
+    local acquired, handle = pcall(overlay.acquire, { title = scene.PANEL_TITLE })
+    if not acquired then
+      error(handle, 0)
+    end
+    if type(handle) ~= "number" then
+      fail("E_UI_UNAVAILABLE", "ui.overlay.acquire returned no session handle")
+    end
+    panel.session = handle
+  end
+  local updated_ok, updated = pcall(overlay.update, panel.session, component)
+  if not updated_ok then
+    -- The `overlay.released` observation is delivered on the cold tick, so a
+    -- session Core ended a moment ago can still look live here. Clear the
+    -- local handle and surface the host's typed error; the next `open` after
+    -- the observation acquires a fresh session. Never acquire a replacement
+    -- here: the late release event would orphan it.
+    close_panel()
+    error(updated, 0)
+  end
+  if updated == false then
+    close_panel()
+    fail("E_UI_UNAVAILABLE", "ui.overlay.update rejected the panel scene")
+  end
+  return true
+end
+
 bitty.commands.register({
   id = "open",
   title = "Git Panel: open",
-  description = "Open the git panel with the cached working-tree summary.",
+  description = "Open the git panel overlay with branch, status, and recent log rows.",
   run = function(_args)
-    -- M-GP-06: exactly one snapshot per open; the shared cache serves both
-    -- the branch and the status derivations below (no per-listing refresh).
+    -- M-GP-06: exactly one snapshot per open; the shared cache serves the
+    -- branch, status, and log derivations below (no per-listing refresh).
     -- The status derivation joins against the resolved repository root,
     -- not the pane cwd (PLUG-APP-005); the summary `cwd` still reports the
     -- pane cwd.
     refresh_cache()
-    local root = resolve_repo_root()
+    local root = require_repo_root()
     local branches = branch_list_from_output(spawn_git({ "branch", "-a" }))
     local entries = status_entries_from_output(spawn_git({ "status", "--porcelain" }), root)
+    local commits = commit_list_from_output(spawn_git({ "log", "--oneline", "-n", "10" }))
+    present_panel(panel_scene(root, branches, entries, commits))
     return {
       cwd = cache.cwd,
       repo_root = root,
+      branch = current_branch(branches),
       branches = #branches,
       entries = #entries,
+      commits = #commits,
+      visible = true,
     }
   end,
 })
@@ -637,13 +786,25 @@ bitty.events.subscribe("focus.changed", function(event)
   pcall(refresh_cache)
 end)
 
+-- Reset the local session when the overlay ends without our asking (Esc,
+-- focus switch, idle timeout, unload). The host has already destroyed the
+-- surface, so the next open acquires a fresh one instead of updating a dead
+-- handle.
+bitty.events.subscribe("overlay.released", function(_event)
+  panel.session = nil
+end)
+
 M.status_entries = status_entries
 M.branch_list = branch_list
 M.commit_list = commit_list
 M.diff_lines = diff_lines
 M.parse_porcelain = parse_porcelain
 M.resolve_repo_root = resolve_repo_root
+M.require_repo_root = require_repo_root
 M.repo_root_from_output = repo_root_from_output
 M.invalidate_cache = invalidate_cache
+M.panel_session = function()
+  return panel.session
+end
 
 return M

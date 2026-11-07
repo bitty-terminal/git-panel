@@ -4,10 +4,12 @@
 -- accepted surface the git-panel uses — Plugin API v1 commands/events/
 -- settings/terminal-snapshot plus the Layer 2 `[tools.git]` spawn surface
 -- (`process.spawn:git` against the seven allowlisted read-only verbs with
--- bounded output) — with fail-closed capability gates, manifest-declared
--- command/event validation, and the v1 declarative scene validation
--- (`Text`, `Row`, `Column`, `List` only, depth `16`). It performs no I/O,
--- spawns nothing, and never touches the network or the filesystem.
+-- bounded output) and the W-01 focusable overlay session
+-- (`bitty.ui.overlay.acquire/update/poll/release` under `ui.overlay.focus`)
+-- — with fail-closed capability gates, manifest-declared command/event
+-- validation, and the v1 declarative scene validation (`Text`, `Row`,
+-- `Column`, `List` only, depth `16`). It performs no I/O, spawns nothing, and
+-- never touches the network or the filesystem.
 --
 -- The real `bitty` Lua bridge exposes `bitty.process.spawn` as a
 -- consent-gated extra outside the stable Plugin API v1 guarantee. It accepts
@@ -18,14 +20,70 @@
 -- instead of a real host. `pane_cwd_available = false` models a focused view
 -- without a terminal session, which the host refuses with
 -- `E_SPAWN_CWD_UNAVAILABLE`.
+--
+-- The overlay stub mirrors the accepted W-01 single-capture invariant: one
+-- session at a time (`E_UI_ALREADY_CAPTURED`), only the owning handle may be
+-- updated (`E_UI_NOT_OWNER`), release is ungated and idempotent, and ending
+-- the session publishes the observation-only `overlay.released` event.
 
 local allowlist = require("git-panel.allowlist")
 
 local MockHost = {}
 MockHost.__index = MockHost
 
+local V1_KINDS = {
+  Text = true,
+  Row = true,
+  Column = true,
+  List = true,
+}
+
+local MAX_SCENE_DEPTH = 16
+local MAX_SCENE_NODES = 2048
+local MAX_SCENE_TEXT_BYTES = 256 * 1024
+
 local function fail(class, code, message)
   error({ class = class, code = code, message = message }, 0)
+end
+
+-- Validate one v1 declarative scene and count its nodes/text bytes. The
+-- bridge rejects unknown kinds, excessive depth, and the accepted node/text
+-- caps before the host sees the component.
+local function validate_scene(node, depth, budget)
+  if type(node) ~= "table" then
+    fail("validation", "E_UI_COMPONENT_INVALID", "scene node must be a table")
+  end
+  if depth > MAX_SCENE_DEPTH then
+    fail("validation", "E_UI_COMPONENT_INVALID", "scene exceeds the depth bound")
+  end
+  if V1_KINDS[node.kind] ~= true then
+    fail("validation", "E_UI_COMPONENT_INVALID", "scene kind is not a v1 node")
+  end
+  budget.nodes = budget.nodes + 1
+  if budget.nodes > MAX_SCENE_NODES then
+    fail("validation", "E_UI_COMPONENT_INVALID", "scene exceeds the node bound")
+  end
+  if node.kind == "Text" then
+    if type(node.text) ~= "string" then
+      fail("validation", "E_UI_COMPONENT_INVALID", "Text node requires a string text field")
+    end
+    budget.bytes = budget.bytes + #node.text
+    if budget.bytes > MAX_SCENE_TEXT_BYTES then
+      fail("validation", "E_UI_COMPONENT_INVALID", "scene exceeds the text bound")
+    end
+    return
+  end
+  if type(node.children) ~= "table" then
+    fail("validation", "E_UI_COMPONENT_INVALID", node.kind .. " node requires children")
+  end
+  for _, child in ipairs(node.children) do
+    validate_scene(child, depth + 1, budget)
+  end
+end
+
+local function checked_scene(node)
+  validate_scene(node, 0, { nodes = 0, bytes = 0 })
+  return node
 end
 
 function MockHost.new(options)
@@ -55,6 +113,17 @@ function MockHost.new(options)
   self.subscriptions = {}
   self.handle_counter = 0
   self.sequence = 1
+  -- W-01 focusable overlay session state.
+  self.overlay = {
+    active = nil,
+    scene = nil,
+    spec = nil,
+    acquires = 0,
+    updates = 0,
+    releases = 0,
+    visible = false,
+  }
+  self.next_overlay_handle = 1000
   self.bitty = self:build_bitty()
   return self
 end
@@ -125,6 +194,76 @@ function MockHost:build_bitty()
         end
         return self.snapshot_value
       end,
+    },
+    ui = {
+      overlay = {
+        acquire = function(spec)
+          self:assert_capability("bitty.ui.overlay.acquire", "ui.overlay.focus")
+          if spec ~= nil and type(spec) ~= "table" then
+            fail("validation", "E_DEF_INVALID", "ui.overlay.acquire spec must be a table")
+          end
+          if self.overlay.active ~= nil then
+            fail(
+              "runtime",
+              "E_UI_ALREADY_CAPTURED",
+              "another overlay capture session is already active"
+            )
+          end
+          self.next_overlay_handle = self.next_overlay_handle + 1
+          local handle = self.next_overlay_handle
+          local children = {}
+          if type(spec) == "table" then
+            if type(spec.title) == "string" and spec.title ~= "" then
+              children[#children + 1] = { kind = "Text", text = spec.title }
+            end
+            if type(spec.placeholder) == "string" and spec.placeholder ~= "" then
+              children[#children + 1] = { kind = "Text", text = spec.placeholder }
+            end
+          end
+          if #children == 0 then
+            children[1] = { kind = "Text", text = "" }
+          end
+          self.overlay.active = handle
+          self.overlay.scene = checked_scene({ kind = "Column", children = children })
+          self.overlay.spec = spec
+          self.overlay.visible = true
+          self.overlay.acquires = self.overlay.acquires + 1
+          return handle
+        end,
+        update = function(handle, component)
+          self:assert_capability("bitty.ui.overlay.update", "ui.overlay.focus")
+          if type(handle) ~= "number" or handle ~= self.overlay.active then
+            fail(
+              "runtime",
+              "E_UI_NOT_OWNER",
+              "no focusable-overlay input capture is held for this handle"
+            )
+          end
+          self.overlay.scene = checked_scene(component)
+          self.overlay.updates = self.overlay.updates + 1
+          return true
+        end,
+        poll = function(handle)
+          self:assert_capability("bitty.ui.overlay.poll", "ui.overlay.focus")
+          if type(handle) ~= "number" or handle ~= self.overlay.active then
+            fail("runtime", "E_UI_NOT_OWNER", "no capture session for this handle")
+          end
+          return { status = "captured", seq = 0, events = {}, overflowed = false }
+        end,
+        release = function(handle, reason)
+          if type(handle) ~= "number" or handle ~= self.overlay.active then
+            return false
+          end
+          self.overlay.active = nil
+          self.overlay.visible = false
+          self.overlay.releases = self.overlay.releases + 1
+          self:publish("overlay.released", {
+            owner = self.plugin_id,
+            reason = reason or "released",
+          })
+          return true
+        end,
+      },
     },
     process = {
 -- In-memory adapter for the accepted `[tools.git]` argv contract and the
@@ -206,6 +345,21 @@ function MockHost:publish(kind, payload)
     end
   end
   return delivered
+end
+
+-- Simulate a Core-owned session end (Esc, focus switch, idle timeout) and
+-- deliver the observation-only `overlay.released` event.
+function MockHost:dismiss_overlay(reason)
+  if self.overlay.active == nil then
+    return false
+  end
+  self.overlay.active = nil
+  self.overlay.visible = false
+  self:publish("overlay.released", {
+    owner = self.plugin_id,
+    reason = reason or "cancelled",
+  })
+  return true
 end
 
 function MockHost:run(command_id, args)

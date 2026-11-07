@@ -23,11 +23,15 @@ local COMMANDS = {
   PLUGIN_ID .. ":branch",
 }
 
-local EVENTS = { "terminal.cwd-changed", "terminal.title-changed", "focus.changed" }
+local EVENTS = {
+  "terminal.cwd-changed",
+  "terminal.title-changed",
+  "focus.changed",
+  "overlay.released",
+}
 
 local GRANTS = {
-  "panel.provider",
-  "panel.create",
+  "ui.overlay.focus",
   "terminal.semantic-read",
   "process.spawn:git",
 }
@@ -171,7 +175,12 @@ local function run(context)
   -- End to end through the stub: the recorded call is the git args plus the
   -- pane token, never a directory.
   do
-    local _, host = activate({ spawn_outputs = { ["status\0--porcelain"] = "" } })
+    local _, host = activate({
+      spawn_outputs = {
+        ["rev-parse\0--show-toplevel"] = "/srv/git/repo\n",
+        ["status\0--porcelain"] = "",
+      },
+    })
     host:run("status", {})
     tap.equal(#host.spawn_calls, 2, "root resolution plus status")
     tap.equal(host.spawn_calls[1][1], "rev-parse", "root resolves first")

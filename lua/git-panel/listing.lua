@@ -215,16 +215,17 @@ function M.filter_branches(branches, query)
 end
 
 -- Filter and bound a raw path listing to `MAX_ENTRIES` status entries with
--- `status`, sorted deterministically and deduplicated by path. Paths outside
--- the granted read scope are dropped (fail-closed). Pure.
+-- `status`, sorted deterministically and deduplicated by path. Paths that
+-- escape the resolved repository root are dropped (fail-closed). Pure.
 --
--- H-GP-01: `git status --porcelain` emits repo-root-relative paths, which
--- never satisfy the host-absolute grant check. Pass `{ root = <repo root> }`
--- (the pane's cached cwd) so relative paths resolve against the repository
--- root before validation: joined, then admitted only when within the root.
--- Relative paths without a root, and absolute paths outside the grant scope,
--- are still dropped fail-closed. Entry paths for resolved relatives are the
--- joined host-absolute form.
+-- H-GP-01: `git status --porcelain` emits repo-root-relative paths. Pass
+-- `{ root = <repo root> }` (the resolved repository root) so relative paths
+-- resolve against the repository root: joined, then admitted only when
+-- within the root. An absolute path is admitted only when it is inside that
+-- same root; without a root (pure/headless use) it must still be a valid,
+-- traversal-free path. There is no `~/projects` grant prefix: the rootless
+-- `fs.read:**` grant is anchored at the requested directory. Entry paths for
+-- resolved relatives are the joined host-absolute form.
 function M.list_status_entries(raw, status, opts)
   if M.FILE_STATUSES[status] ~= true then
     return {}
@@ -242,8 +243,14 @@ function M.list_status_entries(raw, status, opts)
       if joined ~= nil and scope.is_within_root(root, joined) then
         candidate = joined
       end
-    elseif scope.is_within_repo(path) then
-      candidate = path
+    elseif scope.is_absolute_path(path) then
+      if root ~= nil then
+        if scope.is_within_root(root, path) then
+          candidate = path
+        end
+      elseif scope.is_within_repo(path) then
+        candidate = path
+      end
     end
     if candidate ~= nil and not seen[candidate] then
       seen[candidate] = true

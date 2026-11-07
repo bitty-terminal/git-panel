@@ -33,24 +33,28 @@ plugin-api = "^1.0"
 # Deny by default: omit this table entirely when the plugin needs no authority.
 # Unknown identifiers fail validation and there is no allow-all identifier.
 #
-# `panel.provider` + `panel.create` back the tiled Panel Runtime registration.
+# `ui.overlay.focus` is the accepted W-01 coupled grant: it acquires the
+# focusable overlay and its transient input-capture session, which is the
+# supported surface for a plugin-rendered panel (`bitty.panel.create` only
+# allocates an inert host-owned `Created` record with no content surface).
 # `terminal.semantic-read` gates `bitty.terminal.snapshot`, the read-only
 # cwd/title observation the panel refreshes from. `process.spawn:git` is the
 # closed `process.spawn` family plus the `:git` parameter: only the `git`
 # binary spawns, and only the seven allowlisted read-only verbs
 # (`status`, `diff`, `log`, `branch`, `show`, `rev-parse`, `ls-files`) with
-# bounded output. Any other executable is denied. All identifiers are
-# unchanged from the former bundled manifest; the split changes no identity.
-panel.provider = true
-panel.create = true
+# bounded output. Any other executable is denied.
+ui.overlay.focus = true
 terminal.semantic-read = true
 "process.spawn:git" = true
 
-# Working-tree read scope. Patterns resolve against real paths; symlinks and
-# devices are rejected per host policy. Unchanged from the bundled manifest.
+# Working-tree read scope. The pattern is deliberately rootless (`**`): the
+# host anchors it at the directory a call requests (`bitty` #2971), so a
+# repository rooted anywhere is readable and no `~/projects` prefix is
+# assumed. Patterns resolve against real paths; symlinks and devices are
+# rejected per host policy.
 [[capabilities.filesystem]]
 access = "read"
-paths = ["~/projects/**"]
+paths = ["**"]
 
 [tools.git]
 # Accepted Layer 2 declaration (CTX-0425): `git` must be present and satisfy
@@ -74,4 +78,11 @@ commands = [
 ]
 # Events the plugin subscribes to during activation. Observation events
 # refresh the cached snapshot-derived state; handlers never spawn.
-events = ["terminal.cwd-changed", "terminal.title-changed", "focus.changed"]
+# `overlay.released` clears the local overlay session when Core ends it
+# (Esc, focus switch, idle timeout, unload).
+events = [
+  "terminal.cwd-changed",
+  "terminal.title-changed",
+  "focus.changed",
+  "overlay.released",
+]

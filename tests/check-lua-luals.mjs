@@ -2,7 +2,7 @@
  * LuaLS conformance check for the git-panel plugin sources.
  *
  * Builds two throwaway workspaces that point LuaLS at the vendored Plugin API
- * v1 definitions (`tests/lua-defs/bitty.d.lua`, SDK origin/main `a7fcd2b`) and
+ * v1 definitions (`tests/lua-defs/bitty.d.lua`, SDK `d5d117d`) and
  * runs `lua-language-server --check`:
  *
  * - positive: `lua/git-panel/**` must diagnose cleanly, including the

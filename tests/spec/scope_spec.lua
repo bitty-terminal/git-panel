@@ -8,7 +8,7 @@ function M.run(context)
   local tap = context.tap
   local scope = require("git-panel.scope")
 
-  tap.equal(scope.FS_READ_PATTERN, "~/projects/**", "read pattern pins ~/projects/**")
+  tap.equal(scope.FS_READ_PATTERN, "**", "read pattern is rootless and anchored at the request")
   tap.ok(scope.is_valid_path("~/projects/foo"), "valid path")
   tap.ok(not scope.is_valid_path(""), "empty path invalid")
   tap.ok(not scope.is_valid_path("~/projects/\0evil"), "null byte invalid")
@@ -20,8 +20,11 @@ function M.run(context)
   tap.ok(scope.is_within_repo("~/projects/"), "repo root with slash")
   tap.ok(scope.is_within_repo("~/projects/foo"), "child path")
   tap.ok(scope.is_within_repo("~/projects/foo/bar"), "nested path")
-  tap.ok(not scope.is_within_repo("~/Documents/foo"), "outside root denied")
-  tap.ok(not scope.is_within_repo("/home/user/projects/foo"), "absolute denied")
+  -- bitty#2966: the rootless grant has no fixed `~/projects` prefix, so a
+  -- repository rooted anywhere is admitted.
+  tap.ok(scope.is_within_repo("~/Documents/foo"), "other home directory admitted")
+  tap.ok(scope.is_within_repo("/home/user/projects/foo"), "absolute path admitted")
+  tap.ok(scope.is_within_repo("/srv/git/repo/src/lib.rs"), "arbitrary repository admitted")
   tap.ok(not scope.is_within_repo("~/projects/../etc/passwd"), "traversal denied")
   tap.ok(not scope.is_within_repo("~/projects/foo/../bar"), "inner traversal denied")
   tap.ok(not scope.is_within_repo("~/projects/.."), "bare dotdot denied")
@@ -34,11 +37,11 @@ function M.run(context)
   tap.ok(not scope.is_within_repo("~/projects/\0evil"), "null denied")
 
   tap.ok(scope.is_fs_allowed("~/projects/foo"), "fs allows child")
-  tap.ok(not scope.is_fs_allowed("/etc/passwd"), "fs denies absolute")
+  tap.ok(scope.is_fs_allowed("/etc/passwd"), "fs admits any lexical path")
   tap.ok(not scope.is_fs_allowed("~/projects/../secret"), "fs denies traversal")
 
   tap.ok(scope.validate_read("~/projects/foo") ~= nil, "validate_read admits child")
-  tap.ok(scope.validate_read("/etc/passwd") == nil, "validate_read denies outside")
+  tap.ok(scope.validate_read("/etc/passwd") ~= nil, "validate_read admits another root")
   tap.ok(scope.validate_read("~/projects/../evil") == nil, "validate_read denies traversal")
 
   -- H-GP-01 root helpers: repositories may live anywhere, not just under

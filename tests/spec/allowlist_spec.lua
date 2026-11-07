@@ -97,7 +97,7 @@ function M.run(context)
   tap.ok(allowlist.is_process_spawn_git_allowed("process.spawn:git"), "exact capability admitted")
   tap.ok(not allowlist.is_process_spawn_git_allowed("process.spawn:rg"), "other tool denied")
   tap.ok(not allowlist.is_process_spawn_git_allowed("process.spawn"), "bare family denied")
-  tap.ok(not allowlist.is_process_spawn_git_allowed("fs.read:~/projects/**"), "fs scope denied")
+  tap.ok(not allowlist.is_process_spawn_git_allowed("fs.read:**"), "fs scope denied")
 
   tap.equal(allowlist.MAX_ARGS, 32, "MAX_ARGS is 32")
   tap.equal(allowlist.MAX_ARG_BYTES, 256, "MAX_ARG_BYTES is 256")
