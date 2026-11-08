@@ -97,15 +97,18 @@ commit messages at 256 characters, and paths at 4096 bytes.
 
 ## Configuration
 
-Git Panel declares no plugin settings, so there is no settings file to create.
-Two manifest requirements gate activation instead:
+This plugin declares no settings.
+
+There is no settings file to create. Two manifest requirements gate activation
+instead:
 
 | Requirement             | Declared value                                      | Notes                                                                                                                                |
 | ----------------------- | --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
 | `git` on `PATH`         | `[tools.git] required = true`, `version = ">=2.30"` | Declared requirement. The pinned SDK linter enforces the declaration; host-side `[tools.*]` enforcement is tracked under Known gaps. |
 | Working-tree read scope | `fs.read` for `**`                                  | Rootless read grant; the host anchors it at the requested directory (bitty #2971), so a checkout rooted anywhere is in scope.        |
 
-No declared settings.
+No declared settings are read or written; the two manifest requirements above
+are the only activation inputs.
 
 ## Keybindings
 
