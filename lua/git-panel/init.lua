@@ -790,7 +790,12 @@ end)
 -- focus switch, idle timeout, unload). The host has already destroyed the
 -- surface, so the next open acquires a fresh one instead of updating a dead
 -- handle.
-bitty.events.subscribe("overlay.released", function(_event)
+bitty.events.subscribe("overlay.released", function(event)
+  local payload = type(event) == "table" and event.payload or nil
+  local owner = type(payload) == "table" and rawget(payload, "owner") or nil
+  if type(owner) == "string" and owner ~= "" and owner ~= "bitty-terminal.git-panel" then
+    return
+  end
   panel.session = nil
 end)
 
