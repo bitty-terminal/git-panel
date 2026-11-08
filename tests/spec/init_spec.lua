@@ -521,6 +521,9 @@ local function run(context)
     host:run("open", {})
     tap.equal(host.overlay.acquires, 2, "the next open acquires a fresh session")
     tap.equal(host.overlay.visible, true, "the fresh panel is presented")
+    -- #53: foreign overlay.released event must not clear git-panel's active session.
+    host:publish("overlay.released", { owner = "bitty-terminal.palette", reason = "cancelled" })
+    tap.ok(plugin.panel_session() ~= nil, "foreign overlay.released leaves panel session intact")
   end
 
   -- A session Core ended but whose `overlay.released` observation has not

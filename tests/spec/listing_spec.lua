@@ -117,6 +117,18 @@ function M.run(context)
   tap.equal(listing.MAX_SELECTION, nil, "MAX_SELECTION removed")
   tap.equal(listing.MAX_NAME_CHARS, 128, "MAX_NAME_CHARS is 128")
   tap.equal(listing.MAX_COMMIT_MESSAGE_CHARS, 256, "MAX_COMMIT_MESSAGE_CHARS is 256")
+
+  -- #53: raw byte sequences starting with a UTF-8 continuation byte (0x80..0xBF)
+  -- must not throw `initial position is a continuation byte` during truncation.
+  local raw_commits = listing.list_commits({
+    { hash = "abc1234", message = "\x80" .. string.rep("a", 300) },
+  })
+  tap.equal(#raw_commits, 1, "raw continuation-prefixed commit message kept")
+  tap.equal(
+    #raw_commits[1].message,
+    listing.MAX_COMMIT_MESSAGE_CHARS,
+    "raw continuation-prefixed commit message truncated safely by byte fallback"
+  )
 end
 
 return M
