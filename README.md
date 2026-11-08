@@ -37,6 +37,13 @@ directory, so a checkout outside `~/projects` works. A pane that is not inside
 a git repository raises the typed `E_NOT_A_GIT_REPO` error instead of showing
 an empty panel.
 
+Open it with `bitty-terminal.git-panel:open`; the plugin installs no default
+chord. For example, focus a pane inside a git checkout, run
+`bitty-terminal.git-panel:open`, and the panel overlay shows the current branch,
+up to 12 status rows, and up to 8 recent commits; `Esc` closes it. `status`,
+`diff`, `log`, and `branch` return their bounded listings as separate command
+results.
+
 ## Install
 
 Prerequisites:
